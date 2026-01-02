@@ -25,8 +25,9 @@ Supports YouTube, Spotify, Resso, Apple Music, SoundCloud and M3U8 links.
 </a>
 
 
-<img src="https://github.com/TeamAloneOp/AloneX/blob/master/.github/alonex.jpg" width="720" height="auto">
-
+<p align="center">
+  <img src="https://litter.catbox.moe/v97ciy.jpg">
+</p>
 
 
 **𝘿𝙀𝙈𝙊 𝙏𝙀𝙎𝙏 𝘽𝙊𝙏 ➣ [˹ 𝞚𝙡𝞸𝞰𝞮 ✗ 𝙈𝙪𝙨𝙞𝙘™ [ 𝐍ᴏ 𝐀ᴅs ] 🥀­­­­­­­­­­­­­  ](https://t.me/AlonePvtBot)**
