@@ -25,9 +25,7 @@ Supports YouTube, Spotify, Resso, Apple Music, SoundCloud and M3U8 links.
 </a>
 
 
-#<p align="center">
-#  <img src="https://litter.catbox.moe/v97ciy.jpg">
-#</p>
+<img src="https://github.com/TeamAloneOp/AloneX/blob/master/.github/alonex.jpg" width="720" height="auto">
 
 
 
