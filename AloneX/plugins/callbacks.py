@@ -116,12 +116,23 @@ async def _controls(_, query: types.CallbackQuery):
         pass
 
 
-@app.on_callback_query(filters.regex("help") & ~app.bl_users)
+@app.on_callback_query(filters.regex(r"^help(_back_start| back| close| \w+)?$") & ~app.bl_users)
 @lang.language()
 async def _help(_, query: types.CallbackQuery):
     data = query.data.split()
+
+    if query.data == "help_back_start":
+        _text = query.lang["start_pm"].format(query.from_user.first_name, app.name)
+        return await query.edit_message_text(
+            text=_text,
+            reply_markup=buttons.start_key(query.lang, True)
+        )
+
     if len(data) == 1:
-        return await query.answer(url=f"https://t.me/{app.username}?start=help")
+        return await query.edit_message_text(
+            text=query.lang["help_menu"],
+            reply_markup=buttons.help_markup(query.lang)
+        )
 
     if data[1] == "back":
         return await query.edit_message_text(
