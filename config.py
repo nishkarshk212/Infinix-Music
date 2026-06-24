@@ -29,7 +29,8 @@ class Config:
         self.QUEUE_LIMIT = int(getenv("QUEUE_LIMIT", "50"))
         self.DURATION_LIMIT = int(getenv("DURATION_LIMIT", "5400"))
         self.PLAYLIST_LIMIT = int(getenv("PLAYLIST_LIMIT", "20"))
-        self.YOUTUBE_API_KEY = getenv("YOUTUBE_API_KEY", "INFLEX68575028D")
+        self.YOUTUBE_API_KEY = getenv("YOUTUBE_API_KEY", "tcRkjxRJ5aB59r5thtYLFWiGLlOfCgN1z8zNJupEDI8")
+        self.YOUTUBE_API_URL = getenv("YOUTUBE_API_URL", "https://youtube-api-music.onrender.com")
         self.COOKIES_URL = [
             url for url in getenv("COOKIES_URL", "").split(" ")
             if url and "batbin.me" in url
