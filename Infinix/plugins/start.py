@@ -29,6 +29,12 @@ async def start(_, message: types.Message):
     if len(message.command) > 1 and message.command[1] == "help":
         return await _help(_, message)
 
+    # React to the /start command
+    try:
+        await message.react("❤️")
+    except:
+        pass
+
     private = message.chat.type == enums.ChatType.PRIVATE
     _text = (
         message.lang["start_pm"].format(message.from_user.first_name, app.name)
@@ -37,12 +43,23 @@ async def start(_, message: types.Message):
     )
 
     key = buttons.start_key(message.lang, private)
-    await message.reply_photo(
-        photo=config.START_IMG,
-        caption=_text,
-        reply_markup=key,
-        quote=not private,
-    )
+    
+    # Send start animation
+    try:
+        await message.reply_animation(
+            animation=config.START_ANIMATION_URL,
+            caption=_text,
+            reply_markup=key,
+            quote=not private,
+        )
+    except:
+        # If animation fails, send the original photo
+        await message.reply_photo(
+            photo=config.START_IMG,
+            caption=_text,
+            reply_markup=key,
+            quote=not private,
+        )
 
     if private:
         if await db.is_user(message.from_user.id):

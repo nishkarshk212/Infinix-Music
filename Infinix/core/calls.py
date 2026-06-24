@@ -94,6 +94,7 @@ class TgCall(PyTgCalls):
                         media=InputMediaPhoto(
                             media=_thumb,
                             caption=text,
+                            has_spoiler=True,
                         ),
                         reply_markup=keyboard,
                     )
@@ -103,6 +104,7 @@ class TgCall(PyTgCalls):
                         photo=_thumb,
                         caption=text,
                         reply_markup=keyboard,
+                        has_spoiler=True,
                     )).id
         except FileNotFoundError:
             await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT))
