@@ -35,6 +35,22 @@ async def start(_, message: types.Message):
     except:
         pass
 
+    # Send loading animation
+    loading_msg = await message.reply_text(
+        "🎵 Loading", 
+        quote=not (message.chat.type == enums.ChatType.PRIVATE)
+    )
+    for _ in range(3):
+        await asyncio.sleep(0.5)
+        await loading_msg.edit_text("🎵 Loading.")
+        await asyncio.sleep(0.5)
+        await loading_msg.edit_text("🎵 Loading..")
+        await asyncio.sleep(0.5)
+        await loading_msg.edit_text("🎵 Loading...")
+
+    # Delete loading message
+    await loading_msg.delete()
+
     private = message.chat.type == enums.ChatType.PRIVATE
     _text = (
         message.lang["start_pm"].format(message.from_user.first_name, app.name)
@@ -44,7 +60,7 @@ async def start(_, message: types.Message):
 
     key = buttons.start_key(message.lang, private)
     
-    # Send start animation
+    # Send start animation/photo
     try:
         await message.reply_animation(
             animation=config.START_ANIMATION_URL,
@@ -53,7 +69,7 @@ async def start(_, message: types.Message):
             quote=not private,
         )
     except:
-        # If animation fails, send the original photo
+        # If animation fails, send photo
         await message.reply_photo(
             photo=config.START_IMG,
             caption=_text,
