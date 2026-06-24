@@ -192,7 +192,7 @@ class Inline:
                 [
                     self.ikb(
                         text=lang["source"],
-                        url="https://github.com/TeamAloneOp/Infinix", style=ButtonStyle.DANGER
+                        url="https://github.com/nishkarshk212/Infinix-Music.git", style=ButtonStyle.DANGER
                     )
                 ]
             ]
