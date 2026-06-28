@@ -182,7 +182,10 @@ class YouTube:
                         return None
                 
                 # Now download the actual file from the obtained URL
-                async with session.get(download_url, ssl=ssl_context) as file_response:
+                file_headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+                }
+                async with session.get(download_url, ssl=ssl_context, headers=file_headers) as file_response:
                     if file_response.status != 200:
                         logger.error(f"[API] File download failed: {file_response.status}")
                         return None
