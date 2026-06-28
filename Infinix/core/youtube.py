@@ -116,21 +116,27 @@ class YouTube:
         await self.download_queue.put(track)
 
     async def download(self, video_id: str, video: bool = False) -> str | None:
+        logger.info(f"[DEBUG] Starting download for video ID: {video_id}, video type: {'video' if video else 'audio'}")
+        
         if not video_id or len(video_id) < 3:
+            logger.error(f"[DEBUG] Invalid video ID: {video_id}")
             return None
 
         os.makedirs(DOWNLOAD_DIR, exist_ok=True)
         ext = "mkv" if video else "webm"
         file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}")
+        logger.info(f"[DEBUG] Target file path: {file_path}")
 
         # Check if file exists locally first
         if os.path.exists(file_path):
+            logger.info(f"[DEBUG] File exists locally")
             await db.add_downloaded(video_id, file_path, video)
             return file_path
 
         # Check database
         existing = await db.get_downloaded(video_id)
         if existing and os.path.exists(existing['file_path']):
+            logger.info(f"[DEBUG] File found in DB: {existing['file_path']}")
             await db.update_last_used(video_id)
             return existing['file_path']
 
@@ -151,22 +157,29 @@ class YouTube:
                 headers = {
                     "X-API-Key": config.YOUTUBE_API_KEY
                 }
+                
+                api_url = f"{config.YOUTUBE_API_URL}/download"
+                logger.info(f"[DEBUG] Requesting download info from: {api_url}, params: {params}")
 
                 async with session.get(
-                    f"{config.YOUTUBE_API_URL}/download",
+                    api_url,
                     params=params,
                     headers=headers
                 ) as response:
+                    logger.info(f"[DEBUG] Download info response status: {response.status}")
+                    
                     if response.status == 401:
                         logger.error("[API] Invalid API key")
                         return None
                     if response.status != 200:
                         logger.error(f"[API] returned {response.status}")
                         text = await response.text()
-                        logger.error(text)
+                        logger.error(f"[API] Response text: {text}")
                         return None
                     
                     download_info = await response.json()
+                    logger.info(f"[DEBUG] Download info: {download_info}")
+                    
                     if not download_info.get("success"):
                         logger.error("[API] Download info not successful")
                         return None
@@ -176,6 +189,8 @@ class YouTube:
                         download_url = download_data.get("best_video_url") or download_data.get("best_audio_url")
                     else:
                         download_url = download_data.get("best_audio_url") or download_data.get("best_video_url")
+                    
+                    logger.info(f"[DEBUG] Selected download URL: {download_url}")
                     
                     if not download_url:
                         logger.error("[API] No download URL found")
@@ -188,18 +203,32 @@ class YouTube:
                     "Accept-Language": "en-US,en;q=0.5",
                     "Referer": "https://www.youtube.com/"
                 }
+                
+                logger.info(f"[DEBUG] Downloading file with headers: {file_headers}")
+                
                 async with session.get(download_url, ssl=ssl_context, headers=file_headers) as file_response:
+                    logger.info(f"[DEBUG] File download response status: {file_response.status}")
+                    
                     if file_response.status != 200:
                         logger.error(f"[API] File download failed: {file_response.status}")
-                        # Try with a different video ID just in case?
+                        error_text = await file_response.text()
+                        logger.error(f"[DEBUG] File download error response: {error_text}")
                         return None
+                    
+                    logger.info(f"[DEBUG] Starting to write file to: {file_path}")
                     with open(file_path, "wb") as f:
                         async for chunk in file_response.content.iter_chunked(8192):
                             f.write(chunk)
+                    
+                    file_size = os.path.getsize(file_path)
+                    logger.info(f"[DEBUG] File written successfully, size: {file_size} bytes")
 
             if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                logger.info(f"[DEBUG] Download complete, adding to DB")
                 await db.add_downloaded(video_id, file_path, video)
                 return file_path
+            else:
+                logger.error(f"[DEBUG] File missing or empty after download")
         except Exception as e:
             logger.error(f"Download exception for ID {video_id}: {e}")
             import traceback
