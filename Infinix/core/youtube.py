@@ -1,13 +1,15 @@
 
 import os
 import re
-import aiohttp
 import random
 import ssl
 import asyncio
 from py_yt import VideosSearch, Playlist
 from Infinix import logger, config, db
 from Infinix.helpers import Track, utils
+
+# Import yt-dlp
+import yt_dlp
 
 DOWNLOAD_DIR = "downloads"
 
@@ -36,6 +38,7 @@ class YouTube:
         logger.info("Saving cookies from urls...")
         if not os.path.exists(self.cookie_dir):
             os.makedirs(self.cookie_dir)
+        import aiohttp
         async with aiohttp.ClientSession() as session:
             for i, url in enumerate(urls):
                 path = f"{self.cookie_dir}/cookie_{i}.txt"
@@ -141,88 +144,33 @@ class YouTube:
             return existing['file_path']
 
         try:
-            # Create ssl context that doesn't check certs to avoid errors
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+            # Get cookies if available
+            cookies_file = self.get_cookies()
+            logger.info(f"[DEBUG] Using cookies file: {cookies_file}")
 
-            async with aiohttp.ClientSession(
-                connector=aiohttp.TCPConnector(ssl=ssl_context)
-            ) as session:
-                # First get download info to get the direct URL
-                params = {
-                    "id": video_id,
-                    "type": "video" if video else "audio"
-                }
-                headers = {
-                    "X-API-Key": config.YOUTUBE_API_KEY
-                }
-                
-                api_url = f"{config.YOUTUBE_API_URL}/download"
-                logger.info(f"[DEBUG] Requesting download info from: {api_url}, params: {params}")
+            # Configure yt-dlp options
+            ydl_opts = {
+                'format': 'bestvideo+bestaudio/best' if video else 'bestaudio/best',
+                'outtmpl': file_path,
+                'noplaylist': True,
+                'quiet': False,
+                'no_warnings': False,
+                'cookiefile': cookies_file if cookies_file else None,
+                'nocheckcertificate': True,
+                'geo_bypass': True,
+                'geo_bypass_country': 'US',
+            }
 
-                async with session.get(
-                    api_url,
-                    params=params,
-                    headers=headers
-                ) as response:
-                    logger.info(f"[DEBUG] Download info response status: {response.status}")
-                    
-                    if response.status == 401:
-                        logger.error("[API] Invalid API key")
-                        return None
-                    if response.status != 200:
-                        logger.error(f"[API] returned {response.status}")
-                        text = await response.text()
-                        logger.error(f"[API] Response text: {text}")
-                        return None
-                    
-                    download_info = await response.json()
-                    logger.info(f"[DEBUG] Download info: {download_info}")
-                    
-                    if not download_info.get("success"):
-                        logger.error("[API] Download info not successful")
-                        return None
-                    
-                    download_data = download_info.get("download", {})
-                    if video:
-                        download_url = download_data.get("best_video_url") or download_data.get("best_audio_url")
-                    else:
-                        download_url = download_data.get("best_audio_url") or download_data.get("best_video_url")
-                    
-                    logger.info(f"[DEBUG] Selected download URL: {download_url}")
-                    
-                    if not download_url:
-                        logger.error("[API] No download URL found")
-                        return None
-                
-                # Now download the actual file from the obtained URL
-                file_headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-                    "Accept": "*/*",
-                    "Accept-Language": "en-US,en;q=0.5",
-                    "Referer": "https://www.youtube.com/"
-                }
-                
-                logger.info(f"[DEBUG] Downloading file with headers: {file_headers}")
-                
-                async with session.get(download_url, ssl=ssl_context, headers=file_headers) as file_response:
-                    logger.info(f"[DEBUG] File download response status: {file_response.status}")
-                    
-                    if file_response.status != 200:
-                        logger.error(f"[API] File download failed: {file_response.status}")
-                        error_text = await file_response.text()
-                        logger.error(f"[DEBUG] File download error response: {error_text}")
-                        return None
-                    
-                    logger.info(f"[DEBUG] Starting to write file to: {file_path}")
-                    with open(file_path, "wb") as f:
-                        async for chunk in file_response.content.iter_chunked(8192):
-                            f.write(chunk)
-                    
-                    file_size = os.path.getsize(file_path)
-                    logger.info(f"[DEBUG] File written successfully, size: {file_size} bytes")
-
+            logger.info(f"[DEBUG] Starting yt-dlp download for video ID: {video_id}")
+            
+            # Run yt-dlp in a thread pool
+            def run_yt_dlp():
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+            
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, run_yt_dlp)
+            
             if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                 logger.info(f"[DEBUG] Download complete, adding to DB")
                 await db.add_downloaded(video_id, file_path, video)
