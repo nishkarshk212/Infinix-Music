@@ -4,12 +4,17 @@ import re
 import random
 import ssl
 import asyncio
+import aiohttp
+import certifi
 from py_yt import VideosSearch, Playlist
 from Infinix import logger, config, db
 from Infinix.helpers import Track, utils
 
 # Import yt-dlp
 import yt_dlp
+
+# Create SSL context with certifi
+ssl_context = ssl.create_default_context(cafile=certifi.where())
 
 DOWNLOAD_DIR = "downloads"
 
@@ -121,12 +126,21 @@ class YouTube:
     async def download(self, video_id: str, video: bool = False) -> str | None:
         logger.info(f"[DEBUG] Starting download for video ID: {video_id}, video type: {'video' if video else 'audio'}")
         
+        # Extract video ID if a full URL was passed (handle nested/duplicated URLs)
+        if "youtube.com" in video_id or "youtu.be" in video_id:
+            # Handle case where URL might be duplicated like: https://www.youtube.com/watch?v=https://www.youtube.com/watch?v=VIDEO_ID
+            while "youtube.com/watch?v=" in video_id:
+                video_id = video_id.split("youtube.com/watch?v=")[-1].split("&")[0]
+            while "youtu.be/" in video_id:
+                video_id = video_id.split("youtu.be/")[-1].split("?")[0]
+            logger.info(f"Extracted video ID from URL: {video_id}")
+        
         if not video_id or len(video_id) < 3:
             logger.error(f"[DEBUG] Invalid video ID: {video_id}")
             return None
 
         os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-        ext = "mkv" if video else "webm"
+        ext = "mp3" if not video else "mp4"
         file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}")
         logger.info(f"[DEBUG] Target file path: {file_path}")
 
@@ -142,6 +156,34 @@ class YouTube:
             logger.info(f"[DEBUG] File found in DB: {existing['file_path']}")
             await db.update_last_used(video_id)
             return existing['file_path']
+
+        full_url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        # First try to get download URL from API
+        api_download_url = None
+        try:
+            logger.info(f"Trying to get download URL from API")
+            async with aiohttp.ClientSession() as session:
+                headers = {"X-API-Key": config.YOUTUBE_API_KEY}
+                async with session.get(
+                    f"{config.YOUTUBE_API_URL}/download",
+                    params={"id": full_url, "type": "audio" if not video else "video"},
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                    ssl=ssl_context
+                ) as resp:
+                    if resp.status == 200:
+                        content_type = resp.headers.get('Content-Type', '')
+                        if 'application/json' in content_type:
+                            json_data = await resp.json()
+                            logger.info(f"API returned JSON: {json_data}")
+                            if 'download_url' in json_data:
+                                api_download_url = json_data['download_url']
+                                logger.info(f"Got download URL from API: {api_download_url}")
+                    else:
+                        logger.info(f"API returned status {resp.status}, will use yt-dlp")
+        except Exception as e:
+            logger.info(f"API request failed: {e}, will use yt-dlp")
 
         try:
             # Get cookies if available
@@ -159,14 +201,22 @@ class YouTube:
                 'nocheckcertificate': True,
                 'geo_bypass': True,
                 'geo_bypass_country': 'US',
+                'extractaudio': not video,
+                'audioformat': 'mp3',
             }
+            
+            # If API provided a direct download URL, use it
+            if api_download_url:
+                logger.info(f"Downloading from API-provided URL using yt-dlp")
+                ydl_opts['external_downloader'] = 'aria2c'
+                ydl_opts['external_downloader_args'] = [api_download_url]
 
             logger.info(f"[DEBUG] Starting yt-dlp download for video ID: {video_id}")
             
             # Run yt-dlp in a thread pool
             def run_yt_dlp():
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+                    ydl.download([full_url])
             
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, run_yt_dlp)
