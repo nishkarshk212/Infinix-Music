@@ -135,7 +135,7 @@ class YouTube:
             return existing['file_path']
 
         try:
-            # Create ssl context that doesn't check certs to avoid errors with render
+            # Create ssl context that doesn't check certs to avoid errors
             ssl_context = ssl.create_default_context()
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
@@ -143,15 +143,19 @@ class YouTube:
             async with aiohttp.ClientSession(
                 connector=aiohttp.TCPConnector(ssl=ssl_context)
             ) as session:
+                # First get download info to get the direct URL
                 params = {
-                    "url": f"https://www.youtube.com/watch?v={video_id}",
-                    "type": "video" if video else "audio",
-                    "api_key": config.YOUTUBE_API_KEY
+                    "id": video_id,
+                    "type": "video" if video else "audio"
+                }
+                headers = {
+                    "X-API-Key": config.YOUTUBE_API_KEY
                 }
 
                 async with session.get(
                     f"{config.YOUTUBE_API_URL}/download",
-                    params=params
+                    params=params,
+                    headers=headers
                 ) as response:
                     if response.status == 401:
                         logger.error("[API] Invalid API key")
@@ -161,10 +165,29 @@ class YouTube:
                         text = await response.text()
                         logger.error(text)
                         return None
-
-                    # New API directly returns the file!
+                    
+                    download_info = await response.json()
+                    if not download_info.get("success"):
+                        logger.error("[API] Download info not successful")
+                        return None
+                    
+                    download_data = download_info.get("download", {})
+                    if video:
+                        download_url = download_data.get("best_video_url") or download_data.get("best_audio_url")
+                    else:
+                        download_url = download_data.get("best_audio_url") or download_data.get("best_video_url")
+                    
+                    if not download_url:
+                        logger.error("[API] No download URL found")
+                        return None
+                
+                # Now download the actual file from the obtained URL
+                async with session.get(download_url, ssl=ssl_context) as file_response:
+                    if file_response.status != 200:
+                        logger.error(f"[API] File download failed: {file_response.status}")
+                        return None
                     with open(file_path, "wb") as f:
-                        async for chunk in response.content.iter_chunked(8192):
+                        async for chunk in file_response.content.iter_chunked(8192):
                             f.write(chunk)
 
             if os.path.exists(file_path) and os.path.getsize(file_path) > 0:

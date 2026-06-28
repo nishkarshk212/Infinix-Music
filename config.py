@@ -29,8 +29,8 @@ class Config:
         self.QUEUE_LIMIT = int(getenv("QUEUE_LIMIT", "50"))
         self.DURATION_LIMIT = int(getenv("DURATION_LIMIT", "5400"))
         self.PLAYLIST_LIMIT = int(getenv("PLAYLIST_LIMIT", "20"))
-        self.YOUTUBE_API_KEY = getenv("YOUTUBE_API_KEY", "tcRkjxRJ5aB59r5thtYLFWiGLlOfCgN1z8zNJupEDI8")
-        self.YOUTUBE_API_URL = getenv("YOUTUBE_API_URL", "https://youtube-api-music.onrender.com")
+        self.YOUTUBE_API_KEY = getenv("YOUTUBE_API_KEY", "NISHKARSH_eTKQjVzWOQEB6aploRZ@r)X1A4(r)MC1")
+        self.YOUTUBE_API_URL = getenv("YOUTUBE_API_URL", "https://fastapi-production-194e.up.railway.app")
         self.COOKIES_URL = [
             url for url in getenv("COOKIES_URL", "").split(" ")
             if url and "batbin.me" in url
