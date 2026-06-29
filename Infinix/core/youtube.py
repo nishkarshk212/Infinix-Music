@@ -177,8 +177,13 @@ class YouTube:
                         if 'application/json' in content_type:
                             json_data = await resp.json()
                             logger.info(f"API returned JSON: {json_data}")
-                            if 'download_url' in json_data:
-                                api_download_url = json_data['download_url']
+                            download_data = json_data.get("download", {})
+                            if video:
+                                api_download_url = download_data.get("best_video_url") or download_data.get("best_audio_url")
+                            else:
+                                api_download_url = download_data.get("best_audio_url") or download_data.get("best_video_url")
+                            
+                            if api_download_url:
                                 logger.info(f"Got download URL from API: {api_download_url}")
                     else:
                         logger.info(f"API returned status {resp.status}, will use yt-dlp")
