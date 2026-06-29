@@ -31,6 +31,8 @@ class Config:
         self.PLAYLIST_LIMIT = int(getenv("PLAYLIST_LIMIT", "20"))
         self.YOUTUBE_API_KEY = getenv("YOUTUBE_API_KEY", "NISHKARSH_eTKQjVzWOQEB6aploRZ@r)X1A4(r)MC1")
         self.YOUTUBE_API_URL = getenv("YOUTUBE_API_URL", "https://fastapi-production-194e.up.railway.app")
+        self.XBIT_API_TOKEN = getenv("XBIT_API_TOKEN", None)
+        self.XBIT_API_URL = getenv("XBIT_API_URL", None)
         self.COOKIES_URL = [
             url for url in getenv("COOKIES_URL", "").split(" ")
             if url and "batbin.me" in url
