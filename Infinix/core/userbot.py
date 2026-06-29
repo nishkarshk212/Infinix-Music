@@ -48,10 +48,18 @@ class Userbot(Client):
         }
         client = clients[num]
         await client.start()
+        # Try to add the assistant user to the log group via the Bot client
+        from Infinix import app
+        try:
+            await app.add_chat_members(config.LOGGER_ID, client.me.id)
+        except Exception as e:
+            logger.info(f"Bot failed to add assistant {num} to log group: {e}")
+
         try:
             await client.send_message(config.LOGGER_ID, "Assistant Started")
-        except:
-            raise SystemExit(f"Assistant {num} failed to send message in log group.")
+        except Exception as e:
+            logger.error(f"Assistant {num} failed to send message in log group: {e}")
+            raise SystemExit(f"Assistant {num} failed to send message in log group. Reason: {e}")
 
         client.id = ub.me.id
         client.name = ub.me.first_name
