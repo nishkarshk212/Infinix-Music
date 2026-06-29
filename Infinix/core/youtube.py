@@ -237,11 +237,32 @@ class YouTube:
                 'audioformat': 'mp3',
             }
             
-            # If API provided a direct download URL, use it
+            # If API provided a direct download URL, try to download it directly via HTTP
             if api_download_url:
-                logger.info(f"Downloading from API-provided URL using yt-dlp")
-                ydl_opts['external_downloader'] = 'aria2c'
-                ydl_opts['external_downloader_args'] = [api_download_url]
+                logger.info(f"Downloading direct URL from API: {api_download_url}")
+                try:
+                    headers = {}
+                    if config.XBIT_API_TOKEN and "xbitcode.com" in api_download_url:
+                        headers["x-api-key"] = config.XBIT_API_TOKEN
+                    
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(api_download_url, headers=headers, timeout=aiohttp.ClientTimeout(total=600), ssl=ssl_context) as response:
+                            if response.status == 200:
+                                with open(file_path, "wb") as f:
+                                    async for chunk in response.content.iter_chunked(1024 * 1024):
+                                        f.write(chunk)
+                                if os.path.exists(file_path) and os.path.getsize(file_path) > 1024:
+                                    logger.info(f"[DEBUG] Download complete via direct API URL, adding to DB")
+                                    await db.add_downloaded(video_id, file_path, video)
+                                    return file_path
+                                else:
+                                    logger.error("Downloaded file is empty or too small.")
+                            else:
+                                logger.error(f"Failed to download direct URL, status code: {response.status}")
+                except Exception as e:
+                    logger.error(f"Error downloading from direct API URL: {e}")
+                
+                logger.info("Direct download failed or skipped, falling back to standard yt-dlp")
 
             logger.info(f"[DEBUG] Starting yt-dlp download for video ID: {video_id}")
             
