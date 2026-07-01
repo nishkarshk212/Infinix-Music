@@ -56,9 +56,15 @@ class TgCall(PyTgCalls):
             if isinstance(media, Track)
             else config.DEFAULT_THUMB
         )
-
         if not media.file_path:
-            await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT))
+            from pyrogram.enums import ButtonStyle
+            key = buttons.ikm([
+                [
+                    buttons.ikb(text=_lang["support"], url=config.SUPPORT_CHAT, style=ButtonStyle.PRIMARY),
+                    buttons.ikb(text=_lang["channel"], url=config.SUPPORT_CHANNEL, style=ButtonStyle.SUCCESS),
+                ]
+            ])
+            await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT), reply_markup=key)
             return await self.play_next(chat_id)
 
         stream = types.MediaStream(
@@ -107,7 +113,14 @@ class TgCall(PyTgCalls):
                         has_spoiler=True,
                     )).id
         except FileNotFoundError:
-            await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT))
+            from pyrogram.enums import ButtonStyle
+            key = buttons.ikm([
+                [
+                    buttons.ikb(text=_lang["support"], url=config.SUPPORT_CHAT, style=ButtonStyle.PRIMARY),
+                    buttons.ikb(text=_lang["channel"], url=config.SUPPORT_CHANNEL, style=ButtonStyle.SUCCESS),
+                ]
+            ])
+            await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT), reply_markup=key)
             await self.play_next(chat_id)
         except exceptions.NoActiveGroupCall:
             await self.stop(chat_id)
@@ -155,8 +168,15 @@ class TgCall(PyTgCalls):
             media.file_path = await yt.download(media.id, video=media.video)
             if not media.file_path:
                 await self.stop(chat_id)
+                from pyrogram.enums import ButtonStyle
+                key = buttons.ikm([
+                    [
+                        buttons.ikb(text=_lang["support"], url=config.SUPPORT_CHAT, style=ButtonStyle.PRIMARY),
+                        buttons.ikb(text=_lang["channel"], url=config.SUPPORT_CHANNEL, style=ButtonStyle.SUCCESS),
+                    ]
+                ])
                 return await msg.edit_text(
-                    _lang["error_no_file"].format(config.SUPPORT_CHAT)
+                    _lang["error_no_file"].format(config.SUPPORT_CHAT), reply_markup=key
                 )
 
         media.message_id = msg.id

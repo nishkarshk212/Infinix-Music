@@ -33,7 +33,7 @@ class Inline:
             )
 
         if not remove:
-            styles = [ButtonStyle.PRIMARY, ButtonStyle.SUCCESS, ButtonStyle.DANGER, ButtonStyle.SECONDARY]
+            styles = [ButtonStyle.PRIMARY, ButtonStyle.SUCCESS, ButtonStyle.DANGER]
             keyboard.append(
                 [
                     self.ikb(text="▷", callback_data=f"controls resume {chat_id}", style=random.choice(styles)),
@@ -153,6 +153,13 @@ class Inline:
                     self.ikb(
                         text=lang["language"] + f" : {lang_codes[language]}",
                         callback_data="language",
+                        style=ButtonStyle.PRIMARY
+                    ),
+                ],
+                [
+                    self.ikb(
+                        text=lang.get("close", "⌯ 𝐂ʟσsє ⌯"),
+                        callback_data="help close",
                         style=ButtonStyle.PRIMARY
                     ),
                 ],
