@@ -137,32 +137,24 @@ class Inline:
             [
                 [
                     self.ikb(
-                        text=lang["play_mode"] + " ➜",
-                        callback_data="settings",
-                    ),
-                    self.ikb(
-                        text="Enabled" if admin_only else "Disabled",
+                        text=lang["play_mode"] + (" : Enabled" if admin_only else " : Disabled"),
                         callback_data="settings play",
                         style=ButtonStyle.SUCCESS if admin_only else ButtonStyle.DANGER
                     ),
                 ],
                 [
                     self.ikb(
-                        text=lang["cmd_delete"] + " ➜",
-                        callback_data="settings",
-                    ),
-                    self.ikb(
-                        text="Enabled" if cmd_delete else "Disabled",
+                        text=lang["cmd_delete"] + (" : Enabled" if cmd_delete else " : Disabled"),
                         callback_data="settings delete",
                         style=ButtonStyle.SUCCESS if cmd_delete else ButtonStyle.DANGER
                     ),
                 ],
                 [
                     self.ikb(
-                        text=lang["language"] + " ➜",
-                        callback_data="settings",
+                        text=lang["language"] + f" : {lang_codes[language]}",
+                        callback_data="language",
+                        style=ButtonStyle.PRIMARY
                     ),
-                    self.ikb(text=lang_codes[language], callback_data="language", style=ButtonStyle.PRIMARY),
                 ],
             ]
         )
