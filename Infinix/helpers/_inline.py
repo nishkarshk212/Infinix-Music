@@ -1,5 +1,6 @@
 from pyrogram import enums, types
 from pyrogram.enums import ButtonStyle
+import random
 
 from Infinix import app, config, lang
 from Infinix.core.lang import lang_codes
@@ -32,33 +33,20 @@ class Inline:
             )
 
         if not remove:
+            styles = [ButtonStyle.PRIMARY, ButtonStyle.SUCCESS, ButtonStyle.DANGER, ButtonStyle.SECONDARY]
             keyboard.append(
                 [
-                    self.ikb(text="▷", callback_data=f"controls resume {chat_id}", style=ButtonStyle.SUCCESS),
-                    self.ikb(text="II", callback_data=f"controls pause {chat_id}", style=ButtonStyle.SUCCESS),
-                    self.ikb(text="⥁", callback_data=f"controls replay {chat_id}", style=ButtonStyle.PRIMARY),
-                    self.ikb(text="‣‣I", callback_data=f"controls skip {chat_id}", style=ButtonStyle.DANGER),
-                    self.ikb(text="▢", callback_data=f"controls stop {chat_id}", style=ButtonStyle.DANGER),
+                    self.ikb(text="▷", callback_data=f"controls resume {chat_id}", style=random.choice(styles)),
+                    self.ikb(text="II", callback_data=f"controls pause {chat_id}", style=random.choice(styles)),
+                    self.ikb(text="⥁", callback_data=f"controls replay {chat_id}", style=random.choice(styles)),
+                    self.ikb(text="‣‣I", callback_data=f"controls skip {chat_id}", style=random.choice(styles)),
+                    self.ikb(text="▢", callback_data=f"controls stop {chat_id}", style=random.choice(styles)),
                 ]
             )
             if not _lang:
                 _lang = lang.languages["en"]
             keyboard.append(
                 [
-                    self.ikb(
-                        text=_lang.get("add_me", "✙ 𝐀ᴅᴅ 𝐌є 𝐈η 𝐘συʀ 𝐆ʀσυᴘ ✙"),
-                        url=f"https://t.me/{app.username}?startgroup=true",
-                        style=ButtonStyle.PRIMARY,
-                    ),
-                ]
-            )
-            keyboard.append(
-                [
-                    self.ikb(
-                        text=_lang.get("channel", "˹ 𝐔ᴘᴅᴧᴛєs ˼"),
-                        url=config.SUPPORT_CHANNEL,
-                        style=ButtonStyle.SUCCESS,
-                    ),
                     self.ikb(
                         text=_lang.get("close", "⌯ 𝐂ʟσsє ⌯"),
                         callback_data="help close",
@@ -152,21 +140,29 @@ class Inline:
                         text=lang["play_mode"] + " ➜",
                         callback_data="settings",
                     ),
-                    self.ikb(text=admin_only, callback_data="settings play"),
+                    self.ikb(
+                        text="Enabled" if admin_only else "Disabled",
+                        callback_data="settings play",
+                        style=ButtonStyle.SUCCESS if admin_only else ButtonStyle.DANGER
+                    ),
                 ],
                 [
                     self.ikb(
                         text=lang["cmd_delete"] + " ➜",
                         callback_data="settings",
                     ),
-                    self.ikb(text=cmd_delete, callback_data="settings delete"),
+                    self.ikb(
+                        text="Enabled" if cmd_delete else "Disabled",
+                        callback_data="settings delete",
+                        style=ButtonStyle.SUCCESS if cmd_delete else ButtonStyle.DANGER
+                    ),
                 ],
                 [
                     self.ikb(
                         text=lang["language"] + " ➜",
                         callback_data="settings",
                     ),
-                    self.ikb(text=lang_codes[language], callback_data="language"),
+                    self.ikb(text=lang_codes[language], callback_data="language", style=ButtonStyle.PRIMARY),
                 ],
             ]
         )

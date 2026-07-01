@@ -222,20 +222,23 @@ class YouTube:
             cookies_file = self.get_cookies()
             logger.info(f"[DEBUG] Using cookies file: {cookies_file}")
 
-            # Configure yt-dlp options
             ydl_opts = {
                 'format': 'bestvideo+bestaudio/best' if video else 'bestaudio/best',
-                'outtmpl': file_path,
+                'outtmpl': file_path.replace('.mp3', '.%(ext)s') if not video else file_path,
                 'noplaylist': True,
-                'quiet': False,
-                'no_warnings': False,
+                'quiet': True,
+                'no_warnings': True,
                 'cookiefile': cookies_file if cookies_file else None,
                 'nocheckcertificate': True,
                 'geo_bypass': True,
                 'geo_bypass_country': 'US',
-                'extractaudio': not video,
-                'audioformat': 'mp3',
             }
+            if not video:
+                ydl_opts['postprocessors'] = [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }]
             
             # If API provided a direct download URL, try to download it directly via HTTP
             if api_download_url:
