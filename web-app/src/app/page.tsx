@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Play,
   Pause,
@@ -128,6 +128,21 @@ export default function Home() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentSong, setCurrentSong] = useState(trendingSongs[0]);
   const [volume, setVolume] = useState(70);
+  const [telegramUser, setTelegramUser] = useState<any>(null);
+  const initialized = useRef(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !initialized.current) {
+      initialized.current = true;
+      
+      if (window.Telegram && window.Telegram.WebApp) {
+        const webApp = window.Telegram.WebApp;
+        webApp.ready();
+        webApp.expand();
+        setTelegramUser(webApp.initDataUnsafe.user);
+      }
+    }
+  }, []);
 
   const tabs = [
     { id: 'dashboard', label: 'Home', icon: HomeIcon },
@@ -161,7 +176,9 @@ export default function Home() {
               <div className="w-10 h-10 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center">
                 <User size={18} />
               </div>
-              <span className="hidden md:block font-medium">Alone Coder</span>
+              <span className="hidden md:block font-medium">
+                {telegramUser ? `${telegramUser.first_name}${telegramUser.last_name ? ` ${telegramUser.last_name}` : ''}` : 'Alone Coder'}
+              </span>
             </div>
           </div>
         </div>
