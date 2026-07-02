@@ -23,17 +23,17 @@ class Inline:
         _lang: dict = None,
     ) -> types.InlineKeyboardMarkup:
         keyboard = []
+        styles = [ButtonStyle.PRIMARY, ButtonStyle.SUCCESS, ButtonStyle.DANGER]
         if status:
             keyboard.append(
-                [self.ikb(text=status, callback_data=f"controls status {chat_id}")]
+                [self.ikb(text=status, callback_data=f"controls status {chat_id}", style=random.choice(styles))]
             )
         elif timer:
             keyboard.append(
-                [self.ikb(text=timer, callback_data=f"controls status {chat_id}", style=ButtonStyle.PRIMARY)]
+                [self.ikb(text=timer, callback_data=f"controls status {chat_id}", style=random.choice(styles))]
             )
 
         if not remove:
-            styles = [ButtonStyle.PRIMARY, ButtonStyle.SUCCESS, ButtonStyle.DANGER]
             keyboard.append(
                 [
                     self.ikb(text="▷", callback_data=f"controls resume {chat_id}", style=random.choice(styles)),
@@ -50,7 +50,7 @@ class Inline:
                     self.ikb(
                         text=_lang.get("close", "⌯ 𝐂ʟσsє ⌯"),
                         callback_data="help close",
-                        style=ButtonStyle.DANGER,
+                        style=random.choice(styles),
                     ),
                 ]
             )
