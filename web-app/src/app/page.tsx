@@ -11,7 +11,7 @@ import {
   Volume2,
   Heart,
   Search,
-  Home,
+  Home as HomeIcon,
   Library,
   Settings,
   BarChart3,
@@ -130,7 +130,7 @@ export default function Home() {
   const [volume, setVolume] = useState(70);
 
   const tabs = [
-    { id: 'dashboard', label: 'Home', icon: Home },
+    { id: 'dashboard', label: 'Home', icon: HomeIcon },
     { id: 'marketplace', label: 'Marketplace', icon: ShoppingCart },
     { id: 'library', label: 'Library', icon: Library },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
