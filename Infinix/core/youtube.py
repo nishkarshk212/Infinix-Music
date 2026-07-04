@@ -159,9 +159,40 @@ class YouTube:
 
         full_url = f"https://www.youtube.com/watch?v={video_id}"
         
-        # First try to get download URL from XBit API
+        # First try to get download URL from Youtube API
         api_download_url = None
-        if config.XBIT_API_TOKEN and config.XBIT_API_URL:
+        if config.YOUTUBE_API_KEY and config.YOUTUBE_API_URL:
+            try:
+                logger.info(f"Trying to get download URL from YouTube API")
+                async with aiohttp.ClientSession() as session:
+                    headers = {"X-API-Key": config.YOUTUBE_API_KEY}
+                    async with session.get(
+                        f"{config.YOUTUBE_API_URL}/download",
+                        params={"id": full_url, "type": "audio" if not video else "video"},
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=30),
+                        ssl=ssl_context
+                    ) as resp:
+                        if resp.status == 200:
+                            content_type = resp.headers.get('Content-Type', '')
+                            if 'application/json' in content_type:
+                                json_data = await resp.json()
+                                logger.info(f"API returned JSON: {json_data}")
+                                download_data = json_data.get("download", {})
+                                if video:
+                                    api_download_url = download_data.get("best_video_url") or download_data.get("best_audio_url")
+                                else:
+                                    api_download_url = download_data.get("best_audio_url") or download_data.get("best_video_url")
+                                
+                                if api_download_url:
+                                    logger.info(f"Got download URL from YouTube API: {api_download_url}")
+                        else:
+                            logger.info(f"YouTube API returned status {resp.status}")
+            except Exception as e:
+                logger.info(f"YouTube API request failed: {e}")
+
+        # Fallback to XBit API if Youtube API did not succeed
+        if not api_download_url and config.XBIT_API_TOKEN and config.XBIT_API_URL:
             try:
                 logger.info(f"Trying to get download URL from XBit API for video ID: {video_id}")
                 xbit_endpoint = f"{config.XBIT_API_URL}/info/{video_id}"
@@ -185,37 +216,6 @@ class YouTube:
                                     logger.info(f"Got download URL from XBit API: {api_download_url}")
             except Exception as e:
                 logger.error(f"XBit API request failed: {e}")
-
-        # Fallback to Youtube API if XBit did not succeed
-        if not api_download_url:
-            try:
-                logger.info(f"Trying to get download URL from API")
-                async with aiohttp.ClientSession() as session:
-                    headers = {"X-API-Key": config.YOUTUBE_API_KEY}
-                    async with session.get(
-                        f"{config.YOUTUBE_API_URL}/download",
-                        params={"id": full_url, "type": "audio" if not video else "video"},
-                        headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=30),
-                        ssl=ssl_context
-                    ) as resp:
-                        if resp.status == 200:
-                            content_type = resp.headers.get('Content-Type', '')
-                            if 'application/json' in content_type:
-                                json_data = await resp.json()
-                                logger.info(f"API returned JSON: {json_data}")
-                                download_data = json_data.get("download", {})
-                                if video:
-                                    api_download_url = download_data.get("best_video_url") or download_data.get("best_audio_url")
-                                else:
-                                    api_download_url = download_data.get("best_audio_url") or download_data.get("best_video_url")
-                                
-                                if api_download_url:
-                                    logger.info(f"Got download URL from API: {api_download_url}")
-                        else:
-                            logger.info(f"API returned status {resp.status}, will use yt-dlp")
-            except Exception as e:
-                logger.info(f"API request failed: {e}, will use yt-dlp")
 
         try:
             # Get cookies if available
