@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath('/Users/botbot/Desktop/Infinix'))
 # Create a minimal config object just for YouTube class
 class MinimalConfig:
     def __init__(self):
-        self.YOUTUBE_API_KEY = "tcRkjxRJ5aB59r5thtYLFWiGLlOfCgN1z8zNJupEDI8"
+        self.YOUTUBE_API_KEY = "lily_6ttewJtNQfKvIUUhV6mxKwRwEf0CxJhZ"
 
 from Infinix.core.youtube import YouTube
 import logging
@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 async def test_yt_class():
     # Temporarily replace config with our minimal one
     from Infinix import config as original_config
-    original_config.YOUTUBE_API_KEY = "tcRkjxRJ5aB59r5thtYLFWiGLlOfCgN1z8zNJupEDI8"
+    original_config.YOUTUBE_API_KEY = "lily_6ttewJtNQfKvIUUhV6mxKwRwEf0CxJhZ"
     
     yt = YouTube()
     

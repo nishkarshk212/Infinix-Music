@@ -2,8 +2,8 @@ import aiohttp
 import asyncio
 import ssl
 
-API_URL = "https://youtube-api-music.onrender.com"
-API_KEY = "tcRkjxRJ5aB59r5thtYLFWiGLlOfCgN1z8zNJupEDI8"
+API_URL = "https://youtube-api-saas-backend.onrender.com"
+API_KEY = "lily_6ttewJtNQfKvIUUhV6mxKwRwEf0CxJhZ"
 
 async def test_hindi_song():
     ssl_context = ssl.create_default_context()

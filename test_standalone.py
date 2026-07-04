@@ -22,7 +22,7 @@ class Track:
     video: bool = False
 
 # Copy of YouTube class
-API_URL = "http://127.0.0.1:8000"
+API_URL = "https://youtube-api-saas-backend.onrender.com"
 DOWNLOAD_DIR = "downloads"
 
 class YouTube:
@@ -117,7 +117,7 @@ class YouTube:
         return None
 
 # Test script
-API_KEY = "NISHKARSH_eTKQjVzWOQEB6aploRZ@r)X1A4(r)MC1"
+API_KEY = "lily_6ttewJtNQfKvIUUhV6mxKwRwEf0CxJhZ"
 
 async def test_hindi_song_download():
     yt = YouTube()
