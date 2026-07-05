@@ -168,7 +168,7 @@ class YouTube:
                     headers = {"X-API-Key": config.YOUTUBE_API_KEY}
                     async with session.get(
                         f"{config.YOUTUBE_API_URL}/download",
-                        params={"id": full_url, "type": "audio" if not video else "video"},
+                        params={"id": video_id, "type": "audio" if not video else "video"},
                         headers=headers,
                         timeout=aiohttp.ClientTimeout(total=30),
                         ssl=ssl_context
