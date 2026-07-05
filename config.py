@@ -9,22 +9,22 @@ class Config:
         self.API_ID = int(getenv("API_ID", "17596251"))
         self.API_HASH = getenv("API_HASH", "e58343b4c0193e293e391daf97603fcd")
 
-        self.BOT_TOKEN = getenv("BOT_TOKEN", "Apna Bot Token")
-        self.MONGO_URL = getenv("MONGO_URL", "Apna Mongo Db Dalo")
+        self.BOT_TOKEN = getenv("BOT_TOKEN", None)
+        self.MONGO_URL = getenv("MONGO_URL", None)
 
-        self.LOGGER_ID = int(getenv("LOGGER_ID", "Apna Log Group Id Dalo"))
-        self.OWNER_ID = int(getenv("OWNER_ID", "Owner I'd dalo"))
+        self.LOGGER_ID = int(getenv("LOGGER_ID", 0))
+        self.OWNER_ID = int(getenv("OWNER_ID", 0))
         
-        self.SESSION1 = getenv("SESSION", "Apna String Dalo")
+        self.SESSION1 = getenv("SESSION", None)
         self.SESSION2 = getenv("SESSION2", None)
         self.SESSION3 = getenv("SESSION3", None)
 
         self.SUPPORT_CHANNEL = getenv("SUPPORT_CHANNEL", "https://t.me/AloneUpdates")
         self.SUPPORT_CHAT = getenv("SUPPORT_CHAT", "https://t.me/AloneBotSupport")
 
-        self.AUTO_END: bool = getenv("AUTO_END", False)
-        self.AUTO_LEAVE: bool = getenv("AUTO_LEAVE", False)
-        self.VIDEO_PLAY: bool = getenv("VIDEO_PLAY", True)
+        self.AUTO_END: bool = getenv("AUTO_END", "false").lower() in ["true", "1", "yes"]
+        self.AUTO_LEAVE: bool = getenv("AUTO_LEAVE", "false").lower() in ["true", "1", "yes"]
+        self.VIDEO_PLAY: bool = getenv("VIDEO_PLAY", "true").lower() in ["true", "1", "yes"]
 
         self.QUEUE_LIMIT = int(getenv("QUEUE_LIMIT", "50"))
         self.DURATION_LIMIT = int(getenv("DURATION_LIMIT", "5400"))
@@ -44,10 +44,21 @@ class Config:
         self.START_IMG = getenv("START_IMG", "https://files.catbox.moe/zvziwk.jpg")
 
     def check(self):
-        missing = [
-            var
-            for var in ["API_ID", "API_HASH", "BOT_TOKEN", "MONGO_URL", "LOGGER_ID", "OWNER_ID", "SESSION1"]
-            if not getattr(self, var)
-        ]
+        missing = []
+        if not self.API_ID:
+            missing.append("API_ID")
+        if not self.API_HASH:
+            missing.append("API_HASH")
+        if not self.BOT_TOKEN:
+            missing.append("BOT_TOKEN")
+        if not self.MONGO_URL:
+            missing.append("MONGO_URL")
+        if not self.LOGGER_ID:
+            missing.append("LOGGER_ID")
+        if not self.OWNER_ID:
+            missing.append("OWNER_ID")
+        if not self.SESSION1:
+            missing.append("SESSION1")
+            
         if missing:
             raise SystemExit(f"Missing required environment variables: {', '.join(missing)}")
