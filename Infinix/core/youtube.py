@@ -159,16 +159,18 @@ class YouTube:
 
         full_url = f"https://www.youtube.com/watch?v={video_id}"
         
-        # First try to get download URL from Youtube API
+        # First try to get download URL from Youtube API using /audio or /video endpoints
         api_download_url = None
+        need_audio_extraction = False
         if config.YOUTUBE_API_KEY and config.YOUTUBE_API_URL:
             try:
-                logger.info(f"Trying to get download URL from YouTube API")
+                endpoint = "/video" if video else "/audio"
+                logger.info(f"Trying to get download URL from YouTube API at {endpoint}")
                 async with aiohttp.ClientSession() as session:
                     headers = {"X-API-Key": config.YOUTUBE_API_KEY}
                     async with session.get(
-                        f"{config.YOUTUBE_API_URL}/download",
-                        params={"id": video_id, "type": "audio" if not video else "video"},
+                        f"{config.YOUTUBE_API_URL}{endpoint}",
+                        params={"id": video_id},
                         headers=headers,
                         timeout=aiohttp.ClientTimeout(total=30),
                         ssl=ssl_context
@@ -178,11 +180,30 @@ class YouTube:
                             if 'application/json' in content_type:
                                 json_data = await resp.json()
                                 logger.info(f"API returned JSON: {json_data}")
-                                download_data = json_data.get("download", {})
                                 if video:
-                                    api_download_url = download_data.get("best_video_url") or download_data.get("best_audio_url")
+                                    video_data = json_data.get("video", {})
+                                    api_download_url = video_data.get("best_video", {}).get("url")
                                 else:
-                                    api_download_url = download_data.get("best_audio_url") or download_data.get("best_video_url")
+                                    audio_data = json_data.get("audio", {})
+                                    api_download_url = audio_data.get("best_audio", {}).get("url")
+                                    # If no best_audio_url, use best_video_url and we'll extract audio
+                                    if not api_download_url:
+                                        api_download_url = audio_data.get("audio_streams", [{}])[0].get("url") if audio_data.get("audio_streams") else None
+                                        if not api_download_url:
+                                            video_endpoint = "/video"
+                                            async with session.get(
+                                                f"{config.YOUTUBE_API_URL}{video_endpoint}",
+                                                params={"id": video_id},
+                                                headers=headers,
+                                                timeout=aiohttp.ClientTimeout(total=30),
+                                                ssl=ssl_context
+                                            ) as video_resp:
+                                                if video_resp.status == 200:
+                                                    video_json = await video_resp.json()
+                                                    video_data = video_json.get("video", {})
+                                                    api_download_url = video_data.get("best_video", {}).get("url")
+                                                    if api_download_url:
+                                                        need_audio_extraction = True
                                 
                                 if api_download_url:
                                     logger.info(f"Got download URL from YouTube API: {api_download_url}")
@@ -244,20 +265,41 @@ class YouTube:
             if api_download_url:
                 logger.info(f"Downloading direct URL from API: {api_download_url}")
                 try:
-                    headers = {}
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    }
                     if config.XBIT_API_TOKEN and "xbitcode.com" in api_download_url:
                         headers["x-api-key"] = config.XBIT_API_TOKEN
+                    
+                    temp_file_path = file_path
+                    if need_audio_extraction:
+                        temp_file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}_temp.mp4")
                     
                     async with aiohttp.ClientSession() as session:
                         async with session.get(api_download_url, headers=headers, timeout=aiohttp.ClientTimeout(total=600), ssl=ssl_context) as response:
                             if response.status == 200:
-                                with open(file_path, "wb") as f:
+                                with open(temp_file_path, "wb") as f:
                                     async for chunk in response.content.iter_chunked(1024 * 1024):
                                         f.write(chunk)
-                                if os.path.exists(file_path) and os.path.getsize(file_path) > 1024:
-                                    logger.info(f"[DEBUG] Download complete via direct API URL, adding to DB")
-                                    await db.add_downloaded(video_id, file_path, video)
-                                    return file_path
+                                if os.path.exists(temp_file_path) and os.path.getsize(temp_file_path) > 1024:
+                                    if need_audio_extraction:
+                                        # Extract audio from video using FFmpeg
+                                        logger.info("Extracting audio from downloaded video")
+                                        loop = asyncio.get_event_loop()
+                                        def extract_audio():
+                                            import subprocess
+                                            subprocess.run([
+                                                'ffmpeg', '-i', temp_file_path,
+                                                '-vn', '-acodec', 'libmp3lame', '-ab', '192k', '-ar', '44100',
+                                                '-y', file_path
+                                            ], check=True, capture_output=True)
+                                        await loop.run_in_executor(None, extract_audio)
+                                        os.remove(temp_file_path)
+                                    
+                                    if os.path.exists(file_path) and os.path.getsize(file_path) > 1024:
+                                        logger.info(f"[DEBUG] Download complete via direct API URL, adding to DB")
+                                        await db.add_downloaded(video_id, file_path, video)
+                                        return file_path
                                 else:
                                     logger.error("Downloaded file is empty or too small.")
                             else:
