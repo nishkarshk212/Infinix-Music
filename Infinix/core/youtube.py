@@ -66,9 +66,9 @@ def _normalize_youtube_link(
     cleaned = link.strip()
     if "youtube.com" not in cleaned and "youtu.be" not in cleaned:
         cleaned = base + cleaned
-    cleaned = cleaned.split("&amp;si=")[0].split("?si=")[0]
-    if "&amp;" in cleaned and "list=" not in cleaned:
-        cleaned = cleaned.split("&amp;")[0]
+    cleaned = cleaned.split("&si=")[0].split("?si=")[0]
+    if "&" in cleaned and "list=" not in cleaned:
+        cleaned = cleaned.split("&")[0]
     return cleaned
 
 
@@ -77,9 +77,9 @@ def _extract_video_id(link: str) -> str | None:
     if not cleaned:
         return None
     if "v=" in cleaned:
-        return cleaned.split("v=")[-1].split("&amp;")[0]
+        return cleaned.split("v=")[-1].split("&")[0]
     if "youtu.be/" in cleaned:
-        return cleaned.split("youtu.be/")[-1].split("?")[0].split("&amp;")[0]
+        return cleaned.split("youtu.be/")[-1].split("?")[0].split("&")[0]
     return cleaned if len(cleaned) == 11 else None
 
 
@@ -98,7 +98,7 @@ async def _shruti_download(video_id: str, media_type: str) -> str | None:
     file_path   = os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}")
 
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    if os.path.exists(file_path) and os.path.getsize(file_path) &gt; 0:
+    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return file_path
 
     try:
@@ -115,7 +115,7 @@ async def _shruti_download(video_id: str, media_type: str) -> str | None:
                     async for chunk in resp.content.iter_chunked(131072):
                         fobj.write(chunk)
 
-        if os.path.exists(file_path) and os.path.getsize(file_path) &gt; 0:
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
             logger.info("Shruti API ✓ %s → %s", video_id, file_path)
             return file_path
 
@@ -149,7 +149,7 @@ async def _railway_download(video_id: str, media_type: str) -> str | None:
     file_path  = os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}")
 
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    if os.path.exists(file_path) and os.path.getsize(file_path) &gt; 0:
+    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return file_path
 
     headers = {
@@ -172,7 +172,7 @@ async def _railway_download(video_id: str, media_type: str) -> str | None:
                             async for chunk in resp.content.iter_chunked(1024 * 1024):
                                 fobj.write(chunk)
                         
-                        if os.path.exists(file_path) and os.path.getsize(file_path) &gt; 0:
+                        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                             logger.info("Railway YT API ✓ %s → %s", video_id, file_path)
                             return file_path
                     else:
@@ -193,14 +193,14 @@ async def _railway_download(video_id: str, media_type: str) -> str | None:
 async def _xbit_download(link: str, media_type: str) -> str | None:
     """
     Download via xBit / YTPROXY API.
-    GET {YTPROXY_URL}/info/&lt;video_id&gt;  →  audio_url / video_url  →  stream download.
+    GET {YTPROXY_URL}/info/<video_id>  →  audio_url / video_url  →  stream download.
     Returns local file path on success, None on failure.
     """
     if not YTPROXY_URL or not YT_API_KEY:
         return None
 
     video_id = _extract_video_id(link)
-    if not video_id or len(video_id) &lt; 3:
+    if not video_id or len(video_id) < 3:
         return None
 
     ext         = "mp4" if media_type == "video" else "mp3"
@@ -208,7 +208,7 @@ async def _xbit_download(link: str, media_type: str) -> str | None:
     file_path   = os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}")
 
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    if os.path.exists(file_path) and os.path.getsize(file_path) &gt; 0:
+    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return file_path
 
     headers = {
@@ -253,7 +253,7 @@ async def _xbit_download(link: str, media_type: str) -> str | None:
                     async for chunk in file_resp.content.iter_chunked(1024 * 1024):
                         fobj.write(chunk)
 
-        if os.path.exists(file_path) and os.path.getsize(file_path) &gt; 0:
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
             logger.info("xBit API ✓ %s → %s", video_id, file_path)
             return file_path
 
@@ -280,7 +280,7 @@ async def _ytdlp_download(link: str, media_type: str) -> str | None:
     file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}")
 
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    if os.path.exists(file_path) and os.path.getsize(file_path) &gt; 0:
+    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return file_path
 
     cookie = cookie_txt_file()
@@ -288,7 +288,7 @@ async def _ytdlp_download(link: str, media_type: str) -> str | None:
     try:
         if media_type == "video":
             ydl_opts = {
-                "format":           "bestvideo[height&lt;=720]+bestaudio/best[height&lt;=720]",
+                "format":           "bestvideo[height<=720]+bestaudio/best[height<=720]",
                 "outtmpl":          file_path,
                 "quiet":            True,
                 "no_warnings":      True,
@@ -322,7 +322,7 @@ async def _ytdlp_download(link: str, media_type: str) -> str | None:
             file_path.replace(f".{ext}", f".{ext}.{ext}"),
         ]
         for c in candidates:
-            if os.path.exists(c) and os.path.getsize(c) &gt; 0:
+            if os.path.exists(c) and os.path.getsize(c) > 0:
                 logger.info("yt-dlp ✓ %s → %s", video_id, c)
                 return c
 
@@ -337,7 +337,7 @@ async def _ytdlp_download(link: str, media_type: str) -> str | None:
 async def _download_with_fallback(
     link: str,
     media_type: str,
-) -&gt; tuple[str | None, str]:
+) -> tuple[str | None, str]:
     """
     Try all downloaders in order:
       1. Railway YT API
@@ -570,10 +570,10 @@ class YouTube:
                     secs = 0
             except (ValueError, IndexError):
                 continue
-            if 0 &lt; secs &lt;= 3600:
+            if 0 < secs <= 3600:
                 filtered.append(item)
 
-        if not filtered or query_type &gt;= len(filtered):
+        if not filtered or query_type >= len(filtered):
             raise ValueError("No suitable videos found within duration limit")
 
         s = filtered[query_type]
@@ -609,7 +609,7 @@ class YouTube:
             link = self.base + link
         link = _normalize_youtube_link(link)
         proc = await asyncio.create_subprocess_exec(
-            "yt-dlp", "-g", "-f", "best[height&lt;=?720][width&lt;=?1280]", link,
+            "yt-dlp", "-g", "-f", "best[height<=?720][width<=?1280]", link,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
