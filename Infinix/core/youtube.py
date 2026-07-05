@@ -25,6 +25,7 @@ from pyrogram.types import Message
 
 from Infinix import config, logger
 from Infinix.helpers import utils
+from Infinix.helpers._dataclass import Track
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SHRUTI_API_URL      = getattr(config, "SHRUTI_API_URL",      "https://api.shrutibots.site")
@@ -533,18 +534,18 @@ class YouTube:
             vidid        = r["id"]
             duration_min = r.get("duration") or "00:00"
             duration_sec = int(utils.to_seconds(duration_min)) if duration_min else 0
-            return {
-                "id":           vidid,
-                "title":        r["title"],
-                "url":          r.get("link", self.base + vidid),
-                "duration":     duration_min,
-                "duration_sec": duration_sec,
-                "thumbnail":    r["thumbnails"][0]["url"].split("?")[0],
-                "channel_name": (r.get("channel") or {}).get("name", ""),
-                "message_id":   message_id,
-                "video":        video,
-                "time":         int(_time.time()),
-            }
+            return Track(
+                id=vidid,
+                title=r["title"],
+                url=r.get("link", self.base + vidid),
+                duration=duration_min,
+                duration_sec=duration_sec,
+                thumbnail=r["thumbnails"][0]["url"].split("?")[0],
+                channel_name=(r.get("channel") or {}).get("name", ""),
+                message_id=message_id,
+                video=video,
+                time=int(_time.time()),
+            )
         except Exception as e:
             logger.warning("YouTube search error for '%s': %s", query, e)
             return None
@@ -658,7 +659,7 @@ class YouTube:
         link: str,
         video: bool = False,
     ) -> list:
-        """Fetch playlist tracks, return list of Track dicts."""
+        """Fetch playlist tracks, return list of Track dataclasses."""
 
         link = _normalize_youtube_link(link)
         try:
@@ -677,16 +678,16 @@ class YouTube:
             duration_sec = int(utils.to_seconds(duration_min)) if duration_min else 0
             thumbs       = data.get("thumbnails") or []
             thumbnail    = thumbs[0].get("url", "").split("?")[0] if thumbs else ""
-            tracks.append({
-                "id":           vidid,
-                "title":        data.get("title") or vidid,
-                "url":          data.get("link") or self.base + vidid,
-                "duration":     duration_min,
-                "duration_sec": duration_sec,
-                "thumbnail":    thumbnail,
-                "user":         mention,
-                "video":        video,
-                "time":         int(_time.time()),
-            })
+            tracks.append(Track(
+                id=vidid,
+                title=data.get("title") or vidid,
+                url=data.get("link") or self.base + vidid,
+                duration=duration_min,
+                duration_sec=duration_sec,
+                thumbnail=thumbnail,
+                user=mention,
+                video=video,
+                time=int(_time.time()),
+            ))
         return tracks
 
