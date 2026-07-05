@@ -33,6 +33,8 @@ class Config:
         self.YOUTUBE_API_URL = getenv("YOUTUBE_API_URL", "https://youtube-api-saas-backend.onrender.com")
         self.XBIT_API_TOKEN = getenv("XBIT_API_TOKEN", None)
         self.XBIT_API_URL = getenv("XBIT_API_URL", None)
+        self.SHRUTI_API_URL = getenv("SHRUTI_API_URL", "https://api.shrutibots.site")
+        self.SHRUTI_API_KEY = getenv("SHRUTI_API_KEY", None)
         self.COOKIES_URL = [
             url for url in getenv("COOKIES_URL", "").split(" ")
             if url and "batbin.me" in url
