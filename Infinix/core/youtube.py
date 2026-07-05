@@ -185,7 +185,12 @@ class YouTube:
                                     api_download_url = video_data.get("best_video", {}).get("url")
                                 else:
                                     audio_data = json_data.get("audio", {})
-                                    api_download_url = audio_data.get("best_audio", {}).get("url")
+                                    best_audio = audio_data.get("best_audio", {})
+                                    api_download_url = best_audio.get("url")
+                                    # Check if this "best_audio" is actually a video file (has vcodec or ext is mp4)
+                                    if api_download_url:
+                                        if best_audio.get("vcodec") or best_audio.get("ext") == "mp4":
+                                            need_audio_extraction = True
                                     # If no best_audio_url, use best_video_url and we'll extract audio
                                     if not api_download_url:
                                         api_download_url = audio_data.get("audio_streams", [{}])[0].get("url") if audio_data.get("audio_streams") else None
@@ -266,7 +271,11 @@ class YouTube:
                 logger.info(f"Downloading direct URL from API: {api_download_url}")
                 try:
                     headers = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Referer": "https://www.youtube.com/",
+                        "Accept": "*/*",
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "Accept-Encoding": "gzip, deflate, br"
                     }
                     if config.XBIT_API_TOKEN and "xbitcode.com" in api_download_url:
                         headers["x-api-key"] = config.XBIT_API_TOKEN
