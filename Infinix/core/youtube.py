@@ -87,7 +87,7 @@ def _extract_video_id(link: str) -> str | None:
 async def _shruti_download(video_id: str, media_type: str) -> str | None:
     """
     Download via Shruti API.
-    GET {SHRUTI_API_URL}/download?url=&lt;video_id&gt;&amp;type=audio|video&amp;api_key=&lt;key&gt;
+    GET {SHRUTI_API_URL}/download?url=<video_id>&type=audio|video&api_key=<key>
     Returns local file path on success, None on failure.
     """
     if not SHRUTI_API_KEY:
@@ -135,9 +135,9 @@ async def _shruti_download(video_id: str, media_type: str) -> str | None:
 async def _railway_download(video_id: str, media_type: str) -> str | None:
     """
     Download via Railway self-hosted YouTube API.
-    GET {RAILWAY_YT_API_URL}/audio?id=&lt;video_id&gt;  →  audio.best_audio.url
-    GET {RAILWAY_YT_API_URL}/video/hq?id=&lt;video_id&gt; (tried first for video)
-    GET {RAILWAY_YT_API_URL}/video?id=&lt;video_id&gt; (fallback)
+    GET {RAILWAY_YT_API_URL}/audio?id=<video_id>  →  audio.best_audio.url
+    GET {RAILWAY_YT_API_URL}/video/hq?id=<video_id> (tried first for video)
+    GET {RAILWAY_YT_API_URL}/video?id=<video_id> (fallback)
     Then streams the direct googlevideo URL to local file.
     Returns local file path on success, None on failure.
     """
@@ -373,12 +373,12 @@ async def _download_with_fallback(
 
 
 # ── Public helpers (kept for backward compat with play.py / calls.py) ─────────
-async def download_song(link: str, title: str | None = None) -&gt; str | None:
+async def download_song(link: str, title: str | None = None) -> str | None:
     path, _ = await _download_with_fallback(link, "audio")
     return path
 
 
-async def download_video(link: str, title: str | None = None) -&gt; str | None:
+async def download_video(link: str, title: str | None = None) -> str | None:
     path, _ = await _download_with_fallback(link, "video")
     return path
 
@@ -403,14 +403,14 @@ class YouTube:
         }
 
     # ── Validators ────────────────────────────────────────────────────────────
-    def valid(self, url: str) -&gt; bool:
+    def valid(self, url: str) -> bool:
         return bool(re.search(self.regex, url))
 
-    def invalid(self, url: str) -&gt; bool:
+    def invalid(self, url: str) -> bool:
         return not self.valid(url)
 
     # ── Cookie management ─────────────────────────────────────────────────────
-    async def save_cookies(self, urls: list) -&gt; None:
+    async def save_cookies(self, urls: list) -> None:
         if not urls:
             return
         os.makedirs(self.cookies_dir, exist_ok=True)
@@ -437,12 +437,12 @@ class YouTube:
             logger.warning("save_cookies error: %s", e)
 
     # ── URL utilities ─────────────────────────────────────────────────────────
-    async def exists(self, link: str, videoid: Union[bool, str] = None) -&gt; bool:
+    async def exists(self, link: str, videoid: Union[bool, str] = None) -> bool:
         if videoid:
             link = self.base + link
         return bool(re.search(self.regex, link))
 
-    async def url(self, message_1: Message) -&gt; Union[str, None]:
+    async def url(self, message_1: Message) -> Union[str, None]:
         messages = [message_1]
         if message_1.reply_to_message:
             messages.append(message_1.reply_to_message)
@@ -474,7 +474,7 @@ class YouTube:
         duration_sec = int(utils.to_seconds(duration_min)) if duration_min else 0
         return title, duration_min, duration_sec, thumbnail, vidid
 
-    async def title(self, link: str, videoid: Union[bool, str] = None) -&gt; str | None:
+    async def title(self, link: str, videoid: Union[bool, str] = None) -> str | None:
         if videoid:
             link = self.base + link
         link = _normalize_youtube_link(link)
@@ -483,7 +483,7 @@ class YouTube:
             return r["title"]
         return None
 
-    async def duration(self, link: str, videoid: Union[bool, str] = None) -&gt; str | None:
+    async def duration(self, link: str, videoid: Union[bool, str] = None) -> str | None:
         if videoid:
             link = self.base + link
         link = _normalize_youtube_link(link)
@@ -492,7 +492,7 @@ class YouTube:
             return r["duration"]
         return None
 
-    async def thumbnail(self, link: str, videoid: Union[bool, str] = None) -&gt; str | None:
+    async def thumbnail(self, link: str, videoid: Union[bool, str] = None) -> str | None:
         if videoid:
             link = self.base + link
         link = _normalize_youtube_link(link)
@@ -624,7 +624,7 @@ class YouTube:
         video_id: str,
         video: bool = False,
         title: str | None = None,
-    ) -&gt; str | None:
+    ) -> str | None:
         """
         Download audio/video by video_id using full fallback chain.
         Returns file path or None.
@@ -657,7 +657,7 @@ class YouTube:
         mention: str,
         link: str,
         video: bool = False,
-    ) -&gt; list:
+    ) -> list:
         """Fetch playlist tracks, return list of Track dicts."""
 
         link = _normalize_youtube_link(link)
