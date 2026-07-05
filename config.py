@@ -29,7 +29,7 @@ class Config:
         self.QUEUE_LIMIT = int(getenv("QUEUE_LIMIT", "50"))
         self.DURATION_LIMIT = int(getenv("DURATION_LIMIT", "5400"))
         self.PLAYLIST_LIMIT = int(getenv("PLAYLIST_LIMIT", "20"))
-        self.YOUTUBE_API_KEY = getenv("YOUTUBE_API_KEY", "lily_6ttewJtNQfKvIUUhV6mxKwRwEf0CxJhZ")
+        self.YOUTUBE_API_KEY = getenv("YOUTUBE_API_KEY", "lily_dahNMcDNyCNkkV1hj6Yb7kIroBPxnkr")
         self.YOUTUBE_API_URL = getenv("YOUTUBE_API_URL", "https://youtube-api-saas-backend.onrender.com")
         self.XBIT_API_TOKEN = getenv("XBIT_API_TOKEN", None)
         self.XBIT_API_URL = getenv("XBIT_API_URL", None)
