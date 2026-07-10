@@ -117,7 +117,6 @@ async def _cookies_download(link: str, media_type: str) -> str | None:
                 "no_warnings":         True,
                 "cookiefile":          cookie,
                 "merge_output_format": "mp4",
-                "extractor_args":      {"youtube": {"player_client": ["ios", "tv", "web"]}},
             }
         else:
             ydl_opts = {
@@ -126,7 +125,6 @@ async def _cookies_download(link: str, media_type: str) -> str | None:
                 "quiet":        True,
                 "no_warnings":  True,
                 "cookiefile":   cookie,
-                "extractor_args": {"youtube": {"player_client": ["ios", "tv", "web"]}},
                 "postprocessors": [{
                     "key":              "FFmpegExtractAudio",
                     "preferredcodec":   "mp3",
@@ -373,7 +371,6 @@ async def _ytdlp_nocookie_download(link: str, media_type: str) -> str | None:
                 "quiet":               True,
                 "no_warnings":         True,
                 "merge_output_format": "mp4",
-                "extractor_args":      {"youtube": {"player_client": ["ios", "tv", "web"]}},
             }
         else:
             ydl_opts = {
@@ -381,7 +378,6 @@ async def _ytdlp_nocookie_download(link: str, media_type: str) -> str | None:
                 "outtmpl":      file_path,
                 "quiet":        True,
                 "no_warnings":  True,
-                "extractor_args": {"youtube": {"player_client": ["ios", "tv", "web"]}},
                 "postprocessors": [{
                     "key":              "FFmpegExtractAudio",
                     "preferredcodec":   "mp3",
@@ -796,7 +792,6 @@ class YouTube:
                 ),
                 "quiet":       True,
                 "no_warnings": True,
-                "extractor_args": {"youtube": {"player_client": ["ios", "tv", "web"]}},
             }
             if cookie:
                 ydl_opts["cookiefile"] = cookie
