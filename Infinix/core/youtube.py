@@ -166,6 +166,10 @@ async def _railway_download(video_id: str, media_type: str) -> str | None:
     """
     if not RAILWAY_YT_API_URL or not RAILWAY_YT_API_KEY:
         return None
+        
+    api_url = RAILWAY_YT_API_URL
+    if not api_url.startswith("http"):
+        api_url = "https://" + api_url
 
     ext        = "mp4" if media_type == "video" else "mp3"
     timeout_dl = 600   if media_type == "video" else 300
@@ -184,7 +188,7 @@ async def _railway_download(video_id: str, media_type: str) -> str | None:
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
             for endpoint in endpoints:
-                media_url = f"{RAILWAY_YT_API_URL}/{endpoint}?id={video_id}"
+                media_url = f"{api_url}/{endpoint}?id={video_id}"
 
                 async with session.get(
                     media_url,
