@@ -1,15 +1,51 @@
 # Copyright (c) 2025 TheHamkerAlone
 # Licensed under the MIT License.
 # This file is part of InfinixMusic
-#ALONE-CODER
+# ALONE-CODER
 
+import asyncio
 from pathlib import Path
 
 from pyrogram import filters, types
 
-from Infinix import anon, app, config, db, lang, queue, tg, yt
+from Infinix import anon, app, config, db, lang, logger, queue, tg, yt
 from Infinix.helpers import buttons, utils
 from Infinix.helpers._play import checkUB
+
+# Track active background download tasks to avoid duplicates
+_background_tasks: set[str] = set()
+
+
+async def _background_download_task(track) -> None:
+    """
+    Background task for a queued track:
+      1. Get stream URL immediately (so it can play without delay when its turn comes).
+      2. Download the actual file in the background (for cleanup + reliability).
+    """
+    try:
+        if not getattr(track, "stream_url", None) and not track.file_path:
+            stream_url = await yt.get_stream_url(track.id, video=track.video)
+            if stream_url:
+                track.stream_url = stream_url
+                logger.info("Background: stream URL ready for %s", track.id)
+
+        if not track.file_path:
+            path = await yt.download(track.id, video=track.video)
+            if path:
+                track.file_path = path
+                logger.info("Background: file download complete for %s → %s", track.id, path)
+            else:
+                logger.warning("Background: file download failed for %s — will use stream URL", track.id)
+    except Exception as e:
+        logger.warning("Background download task failed for %s: %s", track.id, e)
+
+
+def _start_background_download(track) -> None:
+    """Start a background download task for a queued track (skips duplicates)."""
+    if track.id not in _background_tasks:
+        _background_tasks.add(track.id)
+        task = asyncio.create_task(_background_download_task(track))
+        task.add_done_callback(lambda _: _background_tasks.discard(track.id))
 
 
 def playlist_to_queue(chat_id: int, tracks: list) -> str:
@@ -17,6 +53,7 @@ def playlist_to_queue(chat_id: int, tracks: list) -> str:
     for track in tracks:
         pos = queue.add(chat_id, track)
         text += f"<b>{pos}.</b> {track.title}\n"
+        _start_background_download(track)
     text = text[:1948] + "</blockquote>"
     return text
 
@@ -48,10 +85,8 @@ async def play_hndlr(
             tracks = await yt.playlist(
                 config.PLAYLIST_LIMIT, mention, url, video
             )
-
             if not tracks:
                 return await sent.edit_text(m.lang["playlist_error"])
-
             file = tracks[0]
             tracks.remove(file)
             file.message_id = sent.id
@@ -87,6 +122,7 @@ async def play_hndlr(
         await utils.play_log(m, file.title, file.duration)
 
     file.user = mention
+
     if force:
         queue.force_add(m.chat.id, file)
     else:
@@ -105,35 +141,33 @@ async def play_hndlr(
                     m.chat.id, file.id, m.lang["play_now"]
                 ),
             )
-            # Add to background download queue
-            await yt.start_background_downloads()
-            await yt.queue_for_download(file)
-            
+            # Start background: get stream URL + download file for this queued song
+            _start_background_download(file)
+
             if tracks:
                 added = playlist_to_queue(m.chat.id, tracks)
-                for track in tracks:
-                    await yt.queue_for_download(track)
                 await app.send_message(
                     chat_id=m.chat.id,
                     text=m.lang["playlist_queued"].format(len(tracks)) + added,
                 )
             return
 
-    if not file.file_path:
-        fname = f"downloads/{file.id}.{'mkv' if video else 'webm'}"
-        if Path(fname).exists():
-            file.file_path = fname
-        else:
-            await sent.edit_text(m.lang["play_downloading"])
-            file.file_path = await yt.download(file.id, video=video)
+    # ── Immediate play: get stream URL for instant playback ───────────────────
+    if not getattr(file, "stream_url", None) and not file.file_path:
+        file.stream_url = await yt.get_stream_url(file.id, video=video)
+
+        if not getattr(file, "stream_url", None):
+            fname = f"downloads/{file.id}.{'mp4' if video else 'webm'}"
+            if Path(fname).exists():
+                file.file_path = fname
+            else:
+                await sent.edit_text(m.lang["play_downloading"])
+                file.file_path = await yt.download(file.id, video=video)
 
     await anon.play_media(chat_id=m.chat.id, message=sent, media=file)
-    # Start background downloads for any remaining playlist tracks
+
     if tracks:
-        await yt.start_background_downloads()
         added = playlist_to_queue(m.chat.id, tracks)
-        for track in tracks:
-            await yt.queue_for_download(track)
         await app.send_message(
             chat_id=m.chat.id,
             text=m.lang["playlist_queued"].format(len(tracks)) + added,
