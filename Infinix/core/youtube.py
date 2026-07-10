@@ -111,22 +111,22 @@ async def _cookies_download(link: str, media_type: str) -> str | None:
     try:
         if media_type == "video":
             ydl_opts = {
-                "format":              "bestvideo[height<=720]+bestaudio/best[height<=720]/bv+ba/b",
+                "format":              "bestvideo[height<=?720]+bestaudio/best",
                 "outtmpl":             file_path,
                 "quiet":               True,
                 "no_warnings":         True,
                 "cookiefile":          cookie,
                 "merge_output_format": "mp4",
-                "extractor_args":      {"youtube": {"player_client": ["android", "web"]}},
+                "extractor_args":      {"youtube": {"player_client": ["web", "mweb", "android"]}},
             }
         else:
             ydl_opts = {
-                "format":       "bestaudio/ba/b",
+                "format":       "bestaudio/best",
                 "outtmpl":      file_path,
                 "quiet":        True,
                 "no_warnings":  True,
                 "cookiefile":   cookie,
-                "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+                "extractor_args": {"youtube": {"player_client": ["web", "mweb", "android"]}},
                 "postprocessors": [{
                     "key":              "FFmpegExtractAudio",
                     "preferredcodec":   "mp3",
@@ -364,20 +364,20 @@ async def _ytdlp_nocookie_download(link: str, media_type: str) -> str | None:
     try:
         if media_type == "video":
             ydl_opts = {
-                "format":              "bestvideo[height<=720]+bestaudio/best[height<=720]/bv+ba/b",
+                "format":              "bestvideo[height<=?720]+bestaudio/best",
                 "outtmpl":             file_path,
                 "quiet":               True,
                 "no_warnings":         True,
                 "merge_output_format": "mp4",
-                "extractor_args":      {"youtube": {"player_client": ["android", "web"]}},
+                "extractor_args":      {"youtube": {"player_client": ["web", "mweb", "android"]}},
             }
         else:
             ydl_opts = {
-                "format":       "bestaudio/ba/b",
+                "format":       "bestaudio/best",
                 "outtmpl":      file_path,
                 "quiet":        True,
                 "no_warnings":  True,
-                "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+                "extractor_args": {"youtube": {"player_client": ["web", "mweb", "android"]}},
                 "postprocessors": [{
                     "key":              "FFmpegExtractAudio",
                     "preferredcodec":   "mp3",
@@ -787,12 +787,12 @@ class YouTube:
             cookie = cookie_txt_file()
             ydl_opts = {
                 "format": (
-                    "bestvideo[height<=720]+bestaudio/best[height<=720]/bv+ba/b"
-                    if video else "bestaudio/ba/b"
+                    "bestvideo[height<=?720]+bestaudio/best"
+                    if video else "bestaudio/best"
                 ),
                 "quiet":       True,
                 "no_warnings": True,
-                "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+                "extractor_args": {"youtube": {"player_client": ["web", "mweb", "android"]}},
             }
             if cookie:
                 ydl_opts["cookiefile"] = cookie
