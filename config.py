@@ -13,6 +13,7 @@ class Config:
         self.MONGO_URL = getenv("MONGO_URL", None)
 
         self.LOGGER_ID = int(getenv("LOGGER_ID", 0))
+        self.STORAGE_GROUP_ID = int(getenv("STORAGE_GROUP_ID", getenv("LOGGER_ID", 0)))
         self.OWNER_ID = int(getenv("OWNER_ID", 0))
         
         self.SESSION1 = getenv("SESSION", None)
