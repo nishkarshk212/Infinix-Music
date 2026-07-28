@@ -81,7 +81,7 @@ class Userbot(Client):
                     session_string=session,
                 ),
             )
-            client = getattr(self, key); _register_pm_autoreply(client, int(string_key[-1]))
+            client = getattr(self, key)
 
     async def boot_client(self, num: int, ub: Client):
         """
@@ -99,6 +99,7 @@ class Userbot(Client):
         }
         client = clients[num]
         await client.start()
+        _register_pm_autoreply(client, num)
         # Try to add the assistant user to the log group via the Bot client
         from Infinix import app
         try:
