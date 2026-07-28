@@ -27,6 +27,7 @@ class MongoDB:
         self.admin_list = {}
         self.active_calls = {}
         self.admin_play = []
+        self.autoplay = []
         self.blacklisted = []
         self.cmd_delete = []
         self.notified = []
@@ -420,3 +421,24 @@ class MongoDB:
     async def cleanup_old_downloads(self, days_old: int = 7):
         cutoff = time() - (days_old * 86400)
         await self.downloads.delete_many({"last_used": {"$lt": cutoff}})
+
+    # AUTOPLAY METHODS
+    async def get_autoplay(self, chat_id: int) -> bool:
+        if chat_id not in self.autoplay:
+            doc = await self.chatsdb.find_one({"_id": chat_id})
+            if doc and doc.get("autoplay"):
+                self.autoplay.append(chat_id)
+        return chat_id in self.autoplay
+
+    async def set_autoplay(self, chat_id: int, enable: bool = False) -> None:
+        if enable:
+            if chat_id not in self.autoplay:
+                self.autoplay.append(chat_id)
+        else:
+            if chat_id in self.autoplay:
+                self.autoplay.remove(chat_id)
+        await self.chatsdb.update_one(
+            {"_id": chat_id},
+            {"$set": {"autoplay": enable}},
+            upsert=True,
+        )
