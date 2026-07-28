@@ -285,7 +285,7 @@ class MongoDB:
     async def get_lang(self, chat_id: int) -> str:
         if chat_id not in self.lang:
             doc = await self.langdb.find_one({"_id": chat_id})
-            self.lang[chat_id] = doc["lang"] if doc else config.LANG_CODE
+            self.lang[chat_id] = doc["lang"] if doc else getattr(config, "LANG_CODE", "en")
         return self.lang[chat_id]
 
     async def is_logger(self) -> bool:
@@ -531,6 +531,22 @@ class MongoDB:
             await self.storage_db.assistant_pm_config.delete_one({"_id": "default"})
         except Exception as e:
             logger.warning("reset_assistant_pm_config failed: %s", e)
+
+    async def cleanup_old_downloads(self, days_old: int = 7) -> None:
+        """Placeholder — filesystem cleanup handled in __main__.py."""
+        try:
+            from time import time
+            cutoff = time() - (int(days_old) * 86400)
+            try:
+                await self.db.song_cache.delete_many({"created_at": {"$lt": cutoff}})
+            except Exception:
+                pass
+            try:
+                await self.storage_db.shared_song_cache.delete_many({"created_at": {"$lt": cutoff}})
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning("cleanup_old_downloads failed: %s", e)
 
     async def load_cache(self) -> None:
         doc = await self.cache.find_one({"_id": "migrated"})

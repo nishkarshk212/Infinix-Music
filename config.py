@@ -26,6 +26,7 @@ class Config:
         self.AUTO_END: bool = getenv("AUTO_END", "false").lower() in ["true", "1", "yes"]
         self.AUTO_LEAVE: bool = getenv("AUTO_LEAVE", "false").lower() in ["true", "1", "yes"]
         self.VIDEO_PLAY: bool = getenv("VIDEO_PLAY", "true").lower() in ["true", "1", "yes"]
+        self.LANG_CODE = getenv("LANG_CODE", "en")
 
         self.QUEUE_LIMIT = int(getenv("QUEUE_LIMIT", "50"))
         self.DURATION_LIMIT = int(getenv("DURATION_LIMIT", "5400"))
