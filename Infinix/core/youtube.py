@@ -2,15 +2,9 @@
 # Licensed under the MIT License.
 # This file is part of AnonXMusic
 #
-# Download chain (in order of priority):
-#   1. Cookies Base64  (COOKIES_DATA env var → yt-dlp with cookie_0.txt)
-#   2. Railway YT API  (RAILWAY_YT_API_URL / RAILWAY_YT_API_KEY)
-#   3. Shruti API      (SHRUTI_API_URL / SHRUTI_API_KEY)
-#   4. xBit API        (YTPROXY_URL / YT_API_KEY)
+# Download and Streaming Method:
+#   - Railway YT API  (RAILWAY_YT_API_URL / RAILWAY_YT_API_KEY)
 #
-# Stream URL chain (for instant playback without download):
-#   1. yt-dlp --get-url  (uses cookies base64 if available)
-#   2. Railway API       (validated with HEAD request before returning)
 
 import asyncio
 import glob
@@ -28,27 +22,42 @@ from pyrogram.types import Message
 
 from Infinix import config, logger
 from Infinix.helpers import utils
+from Infinix.helpers._dataclass import Track
 
 # ── Config ────────────────────────────────────────────────────────────────────
-SHRUTI_API_URL      = getattr(config, "SHRUTI_API_URL",      "https://api.shrutibots.site")
-SHRUTI_API_KEY      = getattr(config, "SHRUTI_API_KEY",      None)
-
-RAILWAY_YT_API_URL  = getattr(config, "YOUTUBE_API_URL",     None)
-RAILWAY_YT_API_KEY  = getattr(config, "YOUTUBE_API_KEY",     None)
-
-YTPROXY_URL         = getattr(config, "YTPROXY_URL",         None)
-YT_API_KEY          = getattr(config, "YT_API_KEY",          None)
+RAILWAY_YT_API_URL  = getattr(config, "RAILWAY_YT_API_URL",  None)
+RAILWAY_YT_API_KEY  = getattr(config, "RAILWAY_YT_API_KEY",  None)
 
 DOWNLOAD_DIR        = "downloads"
 
+# Per-video_id locks so the foreground download() and the background prefetch
+# task never run yt-dlp on the SAME video_id concurrently. Two concurrent
+# yt-dlp processes writing the same "<id>.mp3.part" / "<id>.orig.mp3" temp
+# files cause "Unable to rename file: [Errno 2]" crashes.
+_dl_locks: "dict[str, asyncio.Lock]" = {}
 
+# Download context used to enrich the error-log message sent to the log group.
 _DL_CTX: "dict" = {}
 
-def set_dl_context(chat_id=None, chat_title=None, title=None, video: bool = False):
+
+def set_dl_context(
+    chat_id: "int | None" = None,
+    chat_title: "str | None" = None,
+    title: "str | None" = None,
+    video: bool = False,
+) -> None:
+    """Store group/song context for the next download failure report."""
     global _DL_CTX
-    _DL_CTX = {"chat_id": chat_id, "chat_title": chat_title, "title": title, "video": video}
+    _DL_CTX = {
+        "chat_id": chat_id,
+        "chat_title": chat_title,
+        "title": title,
+        "video": video,
+    }
+
 
 async def _notify_download_failure(video_id: str, media_type: str) -> None:
+    """Best-effort: forward a total download failure to the configured log group."""
     from Infinix.helpers import utils
     if not getattr(config, "LOGGER_ID", 0):
         return
@@ -66,22 +75,161 @@ async def _notify_download_failure(video_id: str, media_type: str) -> None:
         logger.warning("Failed to forward download failure to log group: %s", e)
 
 
-# ── Cookie helper ─────────────────────────────────────────────────────────────
-def cookie_txt_file() -> str | None:
-    """Return a random cookie .txt file path from the cookies/ folder."""
+def _dl_lock(video_id: str) -> asyncio.Lock:
+    lock = _dl_locks.get(video_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _dl_locks[video_id] = lock
+    return lock
+
+
+def _release_dl_lock(video_id: str) -> None:
+    """Clean up lock object from dictionary to prevent memory leaks."""
+    if video_id in _dl_locks and not _dl_locks[video_id].locked():
+        _dl_locks.pop(video_id, None)
+
+
+def _evict_disk_cache(max_mb: int = 3000) -> None:
+    """LRU-evict oldest files from DOWNLOAD_DIR if total size exceeds max_mb."""
+    if not os.path.exists(DOWNLOAD_DIR):
+        return
     try:
-        base_dir  = os.path.dirname(os.path.abspath(__file__))
-        folder    = os.path.abspath(os.path.join(base_dir, "..", "cookies"))
+        max_bytes = max_mb * 1024 * 1024
+        entries = []
+        total = 0
+        for name in os.listdir(DOWNLOAD_DIR):
+            p = os.path.join(DOWNLOAD_DIR, name)
+            if not os.path.isfile(p):
+                continue
+            try:
+                st = os.stat(p)
+                entries.append((st.st_atime, st.st_size, p))
+                total += st.st_size
+            except Exception:
+                continue
+        if total <= max_bytes:
+            return
+        entries.sort(key=lambda e: e[0])
+        for _atime, size, p in entries:
+            if total <= max_bytes:
+                break
+            try:
+                os.remove(p)
+                total -= size
+                logger.info("LRU disk cache evicted: %s (%s bytes)", p, size)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning("LRU disk cache eviction error: %s", e)
+
+
+_SESSION: aiohttp.ClientSession | None = None
+
+
+def _get_http_session() -> aiohttp.ClientSession:
+    global _SESSION
+    if _SESSION is None or _SESSION.closed:
+        connector = aiohttp.TCPConnector(
+            limit=100,
+            ttl_dns_cache=300,
+            keepalive_timeout=60,
+            enable_cleanup_closed=True,
+        )
+        _SESSION = aiohttp.ClientSession(connector=connector)
+    return _SESSION
+
+
+# YT-dlp gets occasionally blocked by YouTube's bot check.
+# If COOKIES_FILE or COOKIES_DATA is configured, decode/derive a cookie text
+# file that yt-dlp can load via STANDARD cookie file auth header auth semantics.
+_COOKIE_PATH: str | None = None
+
+
+def cookie_txt_file() -> str | None:
+    """Return the best available Netscape-format cookie file path for yt-dlp."""
+    global _COOKIE_PATH
+    if _COOKIE_PATH is not None:
+        return _COOKIE_PATH
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    folder = os.path.abspath(os.path.join(base_dir, "..", "cookies"))
+    primary = os.path.join(folder, "cookie_0.txt")
+    if os.path.exists(primary):
+        _COOKIE_PATH = primary
+        return primary
+    try:
         txt_files = glob.glob(os.path.join(folder, "*.txt"))
-        if not txt_files:
-            return None
-        chosen   = random.choice(txt_files)
-        log_file = os.path.join(folder, "logs.csv")
-        with open(log_file, "a") as f:
-            f.write(f"Chosen: {chosen}\n")
-        return chosen
     except Exception:
-        return None
+        txt_files = []
+    _COOKIE_PATH = txt_files[0] if txt_files else None
+    return _COOKIE_PATH
+
+
+def _resolve_downloaded_file(video_id: str, ext: str) -> str | None:
+    """
+    Find the actual file produced by yt-dlp for `video_id`.
+    """
+    import glob as _glob
+
+    candidates = [
+        os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}"),
+        os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}.{ext}"),
+    ]
+    for c in sorted(_glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*"))):
+        if c.endswith((".part", ".ytdl")) or ".orig." in os.path.basename(c):
+            continue
+        candidates.append(c)
+
+    for c in candidates:
+        if os.path.exists(c) and os.path.getsize(c) > 0:
+            return c
+    return None
+
+
+# yt-dlp 2026.x needs a JS runtime to solve YouTube's n-signature challenge.
+# The default runtime is 'deno', but it is unreliable in containers; Node >= 23.5
+# is the dependable choice. If no working runtime is available every request
+# fails with "Sign in to confirm you're not a bot". Force the 'node' runtime.
+JS_RUNTIMES = {"node": {}}
+
+# YouTube's "Sign in to confirm you're not a bot" check is applied per player
+# client. The default 'web' client is the most aggressively gated; the mobile
+# and TV clients ('tv', 'ios', 'android', 'mweb', 'web_safari') frequently
+# bypass it entirely — no cookies or proxy needed. yt-dlp tries these in order
+# and uses the first that returns a playable response. Override with the
+# YT_PLAYER_CLIENTS env var (comma-separated) if YouTube shifts its gating.
+_DEFAULT_PLAYER_CLIENTS = "tv,ios,android,web_safari,mweb,web"
+
+
+def _with_js_runtime(opts: dict) -> dict:
+    """Return a copy of yt-dlp opts with the node runtime, player-client
+    bypass, and optional proxy.
+
+    - Player clients (tv/ios/android/...) dodge the web bot-check with no
+      external dependency. Tune with the YT_PLAYER_CLIENTS env var.
+    - Set the YTDLP_PROXY env var (e.g. http://user:pass@host:port or
+      socks5://host:port) to route every yt-dlp request through a clean IP —
+      the reliable fix when the whole server IP is bot-flagged.
+    """
+    out = dict(opts)
+    out["js_runtimes"] = JS_RUNTIMES
+
+    clients = [
+        c.strip()
+        for c in os.environ.get("YT_PLAYER_CLIENTS", _DEFAULT_PLAYER_CLIENTS).split(",")
+        if c.strip()
+    ]
+    if clients:
+        extractor_args = dict(out.get("extractor_args") or {})
+        yt_args = dict(extractor_args.get("youtube") or {})
+        yt_args["player_client"] = clients
+        extractor_args["youtube"] = yt_args
+        out["extractor_args"] = extractor_args
+
+    proxy = os.environ.get("YTDLP_PROXY") or os.environ.get("HTTPS_PROXY")
+    if proxy:
+        out["proxy"] = proxy
+    return out
+
 
 
 # ── Link helpers ──────────────────────────────────────────────────────────────
@@ -111,87 +259,15 @@ def _extract_video_id(link: str) -> str | None:
     return cleaned if len(cleaned) == 11 else None
 
 
-# ── Downloader 1: Cookies Base64 via yt-dlp ──────────────────────────────────
-async def _cookies_download(link: str, media_type: str) -> str | None:
-    """
-    Priority 1: Download via yt-dlp using Base64 cookies (COOKIES_DATA env var).
-    The YouTube class __init__ decodes COOKIES_DATA into cookies/cookie_0.txt.
-    Falls back to any available cookie file in the cookies/ directory.
-    Returns local file path on success, None on failure.
-    """
-    video_id  = _extract_video_id(link) or link
-    ext       = "mp4" if media_type == "video" else "mp3"
-    file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}")
-
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-        return file_path
-
-    cookie = cookie_txt_file()
-    # Only proceed if we actually have cookies; no-cookie yt-dlp is priority 4
-    if not cookie:
-        return None
-
-    try:
-        if media_type == "video":
-            ydl_opts = {
-                "format":              "bestvideo[height<=?720]+bestaudio/best",
-                "outtmpl":             file_path,
-                "quiet":               True,
-                "no_warnings":         True,
-                "cookiefile":          cookie,
-                "merge_output_format": "mp4",
-            }
-        else:
-            ydl_opts = {
-                "format":       "bestaudio/best",
-                "outtmpl":      file_path,
-                "quiet":        True,
-                "no_warnings":  True,
-                "cookiefile":   cookie,
-                "postprocessors": [{
-                    "key":              "FFmpegExtractAudio",
-                    "preferredcodec":   "mp3",
-                    "preferredquality": "192",
-                }],
-            }
-
-        loop = asyncio.get_event_loop()
-        def _run():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([_normalize_youtube_link(link)])
-
-        await loop.run_in_executor(None, _run)
-
-        candidates = [
-            file_path,
-            file_path.replace(f".{ext}", f".{ext}.{ext}"),
-        ]
-        for c in candidates:
-            if os.path.exists(c) and os.path.getsize(c) > 0:
-                logger.info("Cookies Base64 (yt-dlp) ✓ %s → %s", video_id, c)
-                return c
-
-        return None
-
-    except Exception as exc:
-        logger.warning("Cookies Base64 download failed for %s: %s", video_id, exc)
-        return None
-
-
-# ── Downloader 2: Railway YT API ─────────────────────────────────────────────
+# ── Downloader: Railway YT API + Direct yt-dlp Fallback ───────────────────
 async def _railway_download(video_id: str, media_type: str) -> str | None:
     """
-    Priority 2: Download via Railway self-hosted YouTube API proxy.
+    Download via Railway self-hosted YouTube API proxy.
     Streams the media directly from the Railway endpoint to a local file.
     Returns local file path on success, None on failure.
     """
     if not RAILWAY_YT_API_URL or not RAILWAY_YT_API_KEY:
         return None
-        
-    api_url = RAILWAY_YT_API_URL
-    if not api_url.startswith("http"):
-        api_url = "https://" + api_url
 
     ext        = "mp4" if media_type == "video" else "mp3"
     timeout_dl = 600   if media_type == "video" else 300
@@ -199,6 +275,10 @@ async def _railway_download(video_id: str, media_type: str) -> str | None:
 
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+        try:
+            os.utime(file_path, None)
+        except Exception:
+            pass
         return file_path
 
     headers = {
@@ -208,12 +288,13 @@ async def _railway_download(video_id: str, media_type: str) -> str | None:
     endpoints = ["play/video/hq", "play/video"] if media_type == "video" else ["play/audio"]
 
     try:
-        async with aiohttp.ClientSession(headers=headers) as session:
-            for endpoint in endpoints:
-                media_url = f"{api_url}/{endpoint}?id={video_id}"
-
+        session = _get_http_session()
+        for endpoint in endpoints:
+            media_url = f"{RAILWAY_YT_API_URL}/{endpoint}?id={video_id}"
+            try:
                 async with session.get(
                     media_url,
+                    headers=headers,
                     timeout=aiohttp.ClientTimeout(total=timeout_dl),
                     allow_redirects=True,
                 ) as file_resp:
@@ -225,14 +306,17 @@ async def _railway_download(video_id: str, media_type: str) -> str | None:
                         continue
 
                     with open(file_path, "wb") as fobj:
-                        async for chunk in file_resp.content.iter_chunked(1024 * 1024):
+                        async for chunk in file_resp.content.iter_chunked(512 * 1024):
                             fobj.write(chunk)
 
                     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                        _evict_disk_cache()
                         logger.info("Railway YT API ✓ %s → %s", video_id, file_path)
                         return file_path
+            except Exception as ep_err:
+                logger.warning("Railway YT API endpoint %s failed for %s: %s", endpoint, video_id, ep_err)
 
-            return None
+        return None
 
     except Exception as exc:
         logger.warning("Railway YT API download failed for %s: %s", video_id, exc)
@@ -244,192 +328,48 @@ async def _railway_download(video_id: str, media_type: str) -> str | None:
         return None
 
 
-# ── Downloader 3: Shruti API ──────────────────────────────────────────────────
-async def _shruti_download(video_id: str, media_type: str) -> str | None:
-    """
-    Priority 3: Download via Shruti API.
-    GET {SHRUTI_API_URL}/download?url=<video_id>&type=audio|video&api_key=<key>
-    Returns local file path on success, None on failure.
-    """
-    if not SHRUTI_API_KEY:
-        return None
-
-    ext         = "mp4" if media_type == "video" else "mp3"
-    timeout_dl  = 600   if media_type == "video" else 300
-    file_path   = os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}")
-
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-        return file_path
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{SHRUTI_API_URL}/download",
-                params={"url": video_id, "type": media_type, "api_key": SHRUTI_API_KEY},
-                timeout=aiohttp.ClientTimeout(total=timeout_dl),
-            ) as resp:
-                if resp.status != 200:
-                    logger.warning("Shruti API status %s for %s", resp.status, video_id)
-                    return None
-                with open(file_path, "wb") as fobj:
-                    async for chunk in resp.content.iter_chunked(131072):
-                        fobj.write(chunk)
-
-        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-            logger.info("Shruti API ✓ %s → %s", video_id, file_path)
-            return file_path
-
-        return None
-
-    except Exception as exc:
-        logger.warning("Shruti API error for %s: %s", video_id, exc)
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-        except OSError:
-            pass
-        return None
-
-
-# ── Downloader 4: xBit API ────────────────────────────────────────────────────
-async def _xbit_download(link: str, media_type: str) -> str | None:
-    """
-    Priority 4: Download via xBit / YTPROXY API.
-    GET {YTPROXY_URL}/info/<video_id>  →  audio_url / video_url  →  stream download.
-    Returns local file path on success, None on failure.
-    """
-    if not YTPROXY_URL or not YT_API_KEY:
-        return None
-
-    video_id = _extract_video_id(link)
-    if not video_id or len(video_id) < 3:
-        return None
-
-    ext         = "mp4" if media_type == "video" else "mp3"
-    timeout_dl  = 600   if media_type == "video" else 300
-    file_path   = os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}")
-
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-        return file_path
-
-    headers = {
-        "x-api-key": str(YT_API_KEY),
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    }
-
-    try:
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(
-                f"{YTPROXY_URL}/info/{video_id}",
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as resp:
-                if resp.status != 200:
-                    logger.warning("xBit info failed: status %s", resp.status)
-                    return None
-                try:
-                    data = await resp.json(content_type=None)
-                except Exception as e:
-                    logger.warning("xBit info returned invalid JSON: %s", e)
-                    return None
-
-            if data.get("status") != "success":
-                logger.warning("xBit API error: %s", data.get("message", "unknown"))
-                return None
-
-            media_url = (
-                data.get("video_url") if media_type == "video" else data.get("audio_url")
-            )
-            if not media_url:
-                logger.warning("xBit: no %s_url in response", media_type)
-                return None
-
-            async with session.get(
-                media_url,
-                timeout=aiohttp.ClientTimeout(total=timeout_dl),
-                allow_redirects=True,
-            ) as file_resp:
-                if file_resp.status != 200:
-                    return None
-                with open(file_path, "wb") as fobj:
-                    async for chunk in file_resp.content.iter_chunked(1024 * 1024):
-                        fobj.write(chunk)
-
-        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-            logger.info("xBit API ✓ %s → %s", video_id, file_path)
-            return file_path
-
-        return None
-
-    except Exception as exc:
-        logger.warning("xBit download failed for %s: %s", video_id, exc)
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-        except OSError:
-            pass
-        return None
-
-
-# ── Downloader 5: yt-dlp without cookies (last resort) ───────────────────────
-async def _ytdlp_nocookie_download(link: str, media_type: str) -> str | None:
-    """
-    Last-resort local yt-dlp download without any cookies.
-    Used only when no cookie file is available.
-    Returns local file path or None.
-    """
-    video_id  = _extract_video_id(link) or link
-    ext       = "mp4" if media_type == "video" else "mp3"
+async def _direct_ytdlp_download(video_id: str, media_type: str) -> str | None:
+    """Fast direct yt-dlp fallback with multi-threaded fragment downloads (-N 4)."""
+    ext = "mp4" if media_type == "video" else "mp3"
     file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}")
-
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-        return file_path
+    link = f"https://www.youtube.com/watch?v={video_id}"
+
+    cmd = [
+        "yt-dlp",
+        "--js-runtimes", "node",
+        "-N", "4",
+        "--buffer-size", "16k",
+        "--no-playlist",
+        "--no-warnings",
+        "-q",
+    ]
+    cookie = cookie_txt_file()
+    if cookie:
+        cmd.extend(["--cookies", cookie])
+
+    if media_type == "video":
+        cmd.extend(["-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/best", "--merge-output-format", "mp4"])
+    else:
+        cmd.extend(["-x", "--audio-format", "mp3", "--audio-quality", "0"])
+
+    cmd.extend(["-o", file_path, link])
 
     try:
-        if media_type == "video":
-            ydl_opts = {
-                "format":              "bestvideo[height<=?720]+bestaudio/best",
-                "outtmpl":             file_path,
-                "quiet":               True,
-                "no_warnings":         True,
-                "merge_output_format": "mp4",
-            }
-        else:
-            ydl_opts = {
-                "format":       "bestaudio/best",
-                "outtmpl":      file_path,
-                "quiet":        True,
-                "no_warnings":  True,
-                "postprocessors": [{
-                    "key":              "FFmpegExtractAudio",
-                    "preferredcodec":   "mp3",
-                    "preferredquality": "192",
-                }],
-            }
-
-        loop = asyncio.get_event_loop()
-        def _run():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([_normalize_youtube_link(link)])
-
-        await loop.run_in_executor(None, _run)
-
-        candidates = [
-            file_path,
-            file_path.replace(f".{ext}", f".{ext}.{ext}"),
-        ]
-        for c in candidates:
-            if os.path.exists(c) and os.path.getsize(c) > 0:
-                logger.info("yt-dlp (no-cookie) ✓ %s → %s", video_id, c)
-                return c
-
-        return None
-
-    except Exception as exc:
-        logger.warning("yt-dlp (no-cookie) download failed for %s: %s", video_id, exc)
-        return None
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        resolved = _resolve_downloaded_file(video_id, ext)
+        if resolved:
+            _evict_disk_cache()
+            return resolved
+        logger.warning("Direct yt-dlp download returned no file for %s: %s", video_id, stderr.decode())
+    except Exception as e:
+        logger.warning("Direct yt-dlp download failed for %s: %s", video_id, e)
+    return None
 
 
 # ── Main download entrypoint ──────────────────────────────────────────────────
@@ -438,44 +378,24 @@ async def _download_with_fallback(
     media_type: str,
 ) -> tuple[str | None, str]:
     """
-    Try all downloaders in priority order:
-      1. Cookies Base64 (yt-dlp + COOKIES_DATA)
-      2. Railway YT API
-      3. Shruti API
-      4. xBit API
-      5. yt-dlp without cookies (absolute last resort)
+    Download using Railway YT API -> Fallback to direct fast multi-threaded yt-dlp.
     Returns (file_path, downloader_name)
     """
     video_id = _extract_video_id(link) or link
 
-    # 1. Cookies Base64 (yt-dlp with decoded COOKIES_DATA)
-    result = await _cookies_download(link, media_type)
-    if result:
-        return result, "cookies_b64"
-
-    # 2. Railway YT API
     result = await _railway_download(video_id, media_type)
     if result:
         return result, "railway"
 
-    # 3. Shruti API
-    result = await _shruti_download(video_id, media_type)
+    logger.info("Railway YT API unavailable/failed for %s. Trying fast direct yt-dlp fallback.", video_id)
+    result = await _direct_ytdlp_download(video_id, media_type)
     if result:
-        return result, "shruti"
+        return result, "yt-dlp"
 
-    # 4. xBit API
-    result = await _xbit_download(link, media_type)
-    if result:
-        return result, "xbit"
-
-    # 5. yt-dlp without cookies (last resort)
-    result = await _ytdlp_nocookie_download(link, media_type)
-    if result:
-        return result, "ytdlp"
-
-    logger.error("All download methods failed for: %s", video_id)
+    logger.error("Download failed for: %s", video_id)
     await _notify_download_failure(video_id, media_type)
     return None, "none"
+
 
 
 # ── Public helpers (kept for backward compat with play.py / calls.py) ─────────
@@ -497,29 +417,10 @@ class YouTube:
         self.listbase = "https://youtube.com/playlist?list="
         self.reg      = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
         self.api      = None
-        self.cookies_dir = os.path.join(os.path.dirname(__file__), "..", "cookies")
-
-        # Decode COOKIES_DATA (base64) env var → cookie_0.txt for yt-dlp use
-        cookies_data = getattr(config, "COOKIES_DATA", None) or os.environ.get("COOKIES_DATA")
-        if cookies_data:
-            try:
-                import base64
-                decoded = base64.b64decode(cookies_data).decode("utf-8")
-                os.makedirs(self.cookies_dir, exist_ok=True)
-                with open(os.path.join(self.cookies_dir, "cookie_0.txt"), "w") as f:
-                    f.write(decoded)
-                logger.info("Loaded cookies from COOKIES_DATA (base64).")
-            except Exception as e:
-                logger.error("Error decoding COOKIES_DATA: %s", e)
 
         self.dl_stats = {
             "total_requests": 0,
-            "cookies_b64":    0,
             "railway":        0,
-            "shruti":         0,
-            "xbit":           0,
-            "ytdlp":          0,
-            "existing_files": 0,
             "failed":         0,
         }
 
@@ -529,33 +430,6 @@ class YouTube:
 
     def invalid(self, url: str) -> bool:
         return not self.valid(url)
-
-    # ── Cookie management ─────────────────────────────────────────────────────
-    async def save_cookies(self, urls: list) -> None:
-        if not urls:
-            return
-        os.makedirs(self.cookies_dir, exist_ok=True)
-        try:
-            async with aiohttp.ClientSession() as session:
-                for i, url in enumerate(urls):
-                    if not url:
-                        continue
-                    try:
-                        async with session.get(
-                            url, timeout=aiohttp.ClientTimeout(total=15)
-                        ) as resp:
-                            if resp.status == 200:
-                                content = await resp.text()
-                                path = os.path.join(self.cookies_dir, f"cookies_{i}.txt")
-                                with open(path, "w") as f:
-                                    f.write(content)
-                                logger.info("Saved cookies → %s", path)
-                            else:
-                                logger.warning("Cookie fetch failed %s (status %s)", url, resp.status)
-                    except Exception as e:
-                        logger.warning("Cookie error from %s: %s", url, e)
-        except Exception as e:
-            logger.warning("save_cookies error: %s", e)
 
     # ── URL utilities ─────────────────────────────────────────────────────────
     async def exists(self, link: str, videoid: Union[bool, str] = None) -> bool:
@@ -755,7 +629,7 @@ class YouTube:
         if videoid:
             link = self.base + link
         link = _normalize_youtube_link(link)
-        ydl = yt_dlp.YoutubeDL({"quiet": True})
+        ydl = yt_dlp.YoutubeDL(_with_js_runtime({"quiet": True}))
         with ydl:
             info = ydl.extract_info(link, download=False)
         formats_available = []
@@ -780,261 +654,98 @@ class YouTube:
             link = self.base + link
         link = _normalize_youtube_link(link)
         proc = await asyncio.create_subprocess_exec(
-            "yt-dlp", "-g", "-f", "best[height<=?720][width<=?1280]", link,
+            "yt-dlp", "--js-runtimes", "node", "-g",
+            "-f", "best[height<=?720][width<=?1280]", link,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return 0, "yt-dlp video extract timed out"
         if stdout:
             return 1, stdout.decode().split("\n")[0]
         return 0, stderr.decode()
 
-    async def get_stream_url(
-        self,
-        video_id: str,
-        video: bool = False,
-    ) -> str | None:
-        """
-        Get a direct stream URL for instant playback (no download).
-
-        Method 1 — Cookies Base64 (yt-dlp extract_info):
-          Uses COOKIES_DATA-decoded cookie file for authenticated access.
-          Returns a direct googlevideo.com URL valid for ~6 hours.
-
-        Method 2 — Railway API:
-          Returns the Railway proxy endpoint URL and validates it with
-          a HEAD request before returning to avoid silent failures.
-        """
-        link = _normalize_youtube_link(video_id, self.base)
-
-        # ── Method 1: yt-dlp with cookies base64 ─────────────────────────────
-        try:
-            cookie = cookie_txt_file()
-            ydl_opts = {
-                "format": (
-                    "bestvideo[height<=?720]+bestaudio/best"
-                    if video else "bestaudio/best"
-                ),
-                "quiet":       True,
-                "no_warnings": True,
-            }
-            if cookie:
-                ydl_opts["cookiefile"] = cookie
-
-            loop = asyncio.get_event_loop()
-            def _run():
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(link, download=False)
-                    # For merged formats, prefer the best audio URL
-                    if info.get("url"):
-                        return info["url"]
-                    formats = info.get("formats") or []
-                    if formats:
-                        return formats[-1].get("url")
-                    return None
-
-            url = await asyncio.wait_for(
-                loop.run_in_executor(None, _run),
-                timeout=30,
-            )
-            if url:
-                logger.info(
-                    "Stream URL via %s: %s",
-                    "Cookies Base64" if cookie else "yt-dlp",
-                    video_id,
-                )
-                return url
-        except asyncio.TimeoutError:
-            logger.warning("get_stream_url yt-dlp timed out for %s", video_id)
-        except Exception as e:
-            logger.warning("get_stream_url yt-dlp failed for %s: %s", video_id, e)
-
-        # ── Method 2: Railway API (validated) ────────────────────────────────
-        if RAILWAY_YT_API_URL and RAILWAY_YT_API_KEY:
-            try:
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "X-API-Key": str(RAILWAY_YT_API_KEY),
-                }
-                endpoint  = "play/video/hq" if video else "play/audio"
-                media_url = f"{RAILWAY_YT_API_URL}/{endpoint}?id={video_id}"
-
-                # Validate the endpoint responds before returning it as stream URL
-                async with aiohttp.ClientSession(headers=headers) as session:
-                    async with session.head(
-                        media_url,
-                        timeout=aiohttp.ClientTimeout(total=10),
-                        allow_redirects=True,
-                    ) as resp:
-                        if resp.status in (200, 206):
-                            logger.info("Stream URL via Railway API: %s", video_id)
-                            return media_url
-                        else:
-                            logger.warning(
-                                "Railway stream URL validation failed: status %s",
-                                resp.status,
-                            )
-            except Exception as e:
-                logger.warning("Railway get_stream_url failed: %s", e)
-
-        return None
-
-    async def _store_in_dump(self, file_path: str, video_id: str, is_video: bool = False) -> None:
-        """Upload downloaded track to STORAGE_GROUP_ID and save file_id + shared msg_id in MongoDB."""
-        try:
-            from Infinix import app, db
-            storage_id = getattr(config, "STORAGE_GROUP_ID", 0) or getattr(config, "LOGGER_ID", 0)
-            if not storage_id:
-                return
-
-            if is_video:
-                msg = await app.send_video(storage_id, video=file_path, caption=f"#VIDEO #{video_id}")
-                file_id = msg.video.file_id if msg and msg.video else None
-            else:
-                msg = await app.send_audio(storage_id, audio=file_path, caption=f"#AUDIO #{video_id}")
-                file_id = msg.audio.file_id if msg and msg.audio else None
-
-            if msg and msg.id:
-                if file_id:
-                    await db.save_song_file_id(video_id, file_id, is_video)
-                await db.save_shared_song(video_id, msg.id, is_video)
-                logger.info("Stored %s in dump channel (%s) -> msg_id: %s", video_id, storage_id, msg.id)
-        except Exception as e:
-            logger.warning("Failed to store %s in dump channel: %s", video_id, e)
-
-
-    # ── Download (main method called by play.py / calls.py) ──────────────────
-    async def download(
-        self,
-        video_id: str,
-        video: bool = False,
-        title: str | None = None,
-    ) -> str | None:
-        """
-        Download audio/video by video_id using Telegram file_id cache, shared MongoDB Atlas msg_id cache, or Railway YT API.
-        Returns file path or None.
-        """
-        from Infinix import app, db
-        self.dl_stats["total_requests"] += 1
-        ext = "mp4" if video else "mp3"
-        target_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}")
-
-        # Check local disk cache first
-        if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
-            return target_path
-
-        # Check bot-local Telegram file_id cache in MongoDB
-        try:
-            cached_file_id = await db.get_song_file_id(video_id, video)
-            if cached_file_id:
-                logger.info("Telegram Dump Cache HIT for %s (file_id: %s...)", video_id, cached_file_id[:15])
-                downloaded_path = await app.download_media(cached_file_id, file_name=target_path)
-                if downloaded_path and os.path.exists(downloaded_path) and os.path.getsize(downloaded_path) > 0:
-                    self.dl_stats["telegram_cache"] = self.dl_stats.get("telegram_cache", 0) + 1
-                    return str(downloaded_path)
-        except Exception as cache_err:
-            logger.warning("Telegram file_id cache fetch failed for %s: %s", video_id, cache_err)
-
-        # Check SHARED MongoDB msg_id cache across ALL 8 BOTS!
-        try:
-            shared_doc = await db.get_shared_song(video_id, video)
-            if shared_doc and shared_doc.get("msg_id"):
-                msg_id = shared_doc["msg_id"]
-                storage_id = shared_doc.get("channel_id") or getattr(config, "STORAGE_GROUP_ID", -1003913556820)
-                logger.info("Shared MongoDB Cache HIT for %s (channel: %s, msg_id: %s)", video_id, storage_id, msg_id)
-                msg = await app.get_messages(storage_id, msg_id)
-                if msg and (msg.audio or msg.video or msg.document):
-                    downloaded_path = await app.download_media(msg, file_name=target_path)
-                    if downloaded_path and os.path.exists(downloaded_path) and os.path.getsize(downloaded_path) > 0:
-                        file_id = (msg.audio or msg.video or msg.document).file_id
-                        await db.save_song_file_id(video_id, file_id, video)
-                        self.dl_stats["shared_cache"] = self.dl_stats.get("shared_cache", 0) + 1
-                        return str(downloaded_path)
-        except Exception as shared_err:
-            logger.warning("Shared MongoDB cache fetch failed for %s: %s", video_id, shared_err)
-
-        # Fallback to YouTube extraction & download
-        link = _normalize_youtube_link(video_id, self.base)
-        try:
-            result, downloader = await _download_with_fallback(
-                link, "video" if video else "audio"
-            )
-            if result:
-                self.dl_stats[downloader] = self.dl_stats.get(downloader, 0) + 1
-                logger.info(
-                    "YouTube.download success: %s (%s) via %s",
-                    video_id,
-                    "video" if video else "audio",
-                    downloader,
-                )
-                # Store downloaded file in Telegram Dump Channel for instant future plays across ALL bots
-                asyncio.create_task(self._store_in_dump(result, video_id, video))
-            else:
-                self.dl_stats["failed"] += 1
-            return result
-        except Exception as e:
-            self.dl_stats["failed"] += 1
-            logger.warning("YouTube.download error for '%s': %s", video_id, e)
-            return None
-
-    # ── Playlist ──────────────────────────────────────────────────────────────
-    async def playlist(
-        self,
-        limit: int,
-        mention: str,
-        link: str,
-        video: bool = False,
-    ) -> list:
-        """Fetch playlist tracks, return list of Track dataclasses."""
-        from Infinix.helpers._dataclass import Track
-
-        link = _normalize_youtube_link(link)
-        try:
-            plist = await Playlist.get(link)
-        except Exception:
-            return []
-
-        tracks = []
-        for data in (plist.get("videos") or [])[:limit]:
-            if not data:
-                continue
-            vidid = data.get("id")
-            if not vidid:
-                continue
-            duration_min = data.get("duration") or "00:00"
-            duration_sec = int(utils.to_seconds(duration_min)) if duration_min else 0
-            thumbs       = data.get("thumbnails") or []
-            thumbnail    = thumbs[0].get("url", "").split("?")[0] if thumbs else ""
-            view_count = None
-            if "viewCount" in data and isinstance(data["viewCount"], dict):
-                view_count = data["viewCount"].get("short") or data["viewCount"].get("text")
-            channel_name = (data.get("channel") or {}).get("name", "")
-            tracks.append(Track(
-                id           = vidid,
-                title        = data.get("title") or vidid,
-                url          = data.get("link") or self.base + vidid,
-                duration     = duration_min,
-                duration_sec = duration_sec,
-                thumbnail    = thumbnail,
-                user         = mention,
-                video        = video,
-                time         = int(_time.time()),
-                view_count   = view_count,
-                channel_name = channel_name,
-            ))
-        return tracks
-
     async def get_related(self, video_id: str, message_id: int) -> "Track | None":
-        cands = await self.get_related_candidates(video_id, limit=1)
-        if cands:
-            t = cands[0]
-            t.message_id = message_id
-            return t
-        return None
+        """Return a RELATED Track for autoplay (NOT the same song).
 
-    async def get_related_candidates(self, video_id: str, limit: int = 15) -> list:
+        Uses yt-dlp to pull YouTube's up-next 'related_videos' of the current
+        track and returns the first usable one as a Track. This guarantees a
+        *different* track (YouTube's own recommendations) instead of
+        re-searching the current title (which just returns the same song).
+
+        FIX (autoplay was broken): the old call used ``extract_flat=True``,
+        which SKIPS the watch_next browse request that populates
+        ``related_videos`` — so it always returned ``None`` and forced the
+        caller into its title-search fallback (same song). A normal (non-flat)
+        extract is used here so the related list is actually filled.
+        """
+        link = self.base + video_id
+        loop = asyncio.get_event_loop()
+        def _run():
+            try:
+                # NOTE: extract_flat=True omits the watch_next browse request,
+                # so YouTube never returns 'related_videos'. Use a normal
+                # extract (player-client bypass from _with_js_runtime helps
+                # dodge the bot-check) so the up-next list is populated.
+                opts = {
+                    "quiet": True,
+                    "no_warnings": True,
+                }
+                cookie = cookie_txt_file()
+                if cookie:
+                    opts["cookiefile"] = cookie
+                with yt_dlp.YoutubeDL(_with_js_runtime(opts)) as ydl:
+                    info = ydl.extract_info(link, download=False) or {}
+                rel = info.get("related_videos") or []
+                # Skip the finished video itself and any playlist/mix/channel
+                # entries (no usable single-video id / duration).
+                for r in rel:
+                    rid = r.get("id")
+                    if not rid or rid == video_id:
+                        continue
+                    if "list=" in (r.get("url") or ""):
+                        continue
+                    if r.get("duration") is None and not r.get("title"):
+                        continue
+                    return r
+                return None
+            except Exception as e:
+                logger.warning("get_related failed for %s: %s", video_id, e)
+                return None
+        try:
+            r = await asyncio.wait_for(loop.run_in_executor(None, _run), timeout=20)
+        except asyncio.TimeoutError:
+            logger.warning("get_related timed out for %s", video_id)
+            return None
+        if not r:
+            return None
+        rid = r.get("id")
+        if not rid:
+            return None
+        duration_min = r.get("duration") or "00:00"
+        try:
+            duration_sec = int(utils.to_seconds(duration_min)) if duration_min else 0
+        except Exception:
+            duration_sec = 0
+        return Track(
+            id=rid,
+            title=r.get("title", "Unknown"),
+            url=r.get("url", self.base + rid),
+            duration=duration_min,
+            duration_sec=duration_sec,
+            thumbnail=(r.get("thumbnails") or [{}])[0].get("url", "").split("?")[0],
+            channel_name=r.get("channel") or r.get("uploader") or "",
+            message_id=message_id,
+            video=False,
+            time=int(_time.time()),
+        )
+
+    async def get_related_candidates(self, video_id: str, limit: int = 15) -> list[Track]:
         """Return a list of RELATED Tracks for autoplay candidate pool."""
-        from Infinix.helpers._dataclass import Track
         link = self.base + video_id
         loop = asyncio.get_event_loop()
 
@@ -1107,9 +818,8 @@ class YouTube:
             )
         return tracks
 
-    async def search_similar_candidates(self, query: str, limit: int = 10) -> list:
+    async def search_similar_candidates(self, query: str, limit: int = 10) -> list[Track]:
         """Search YouTube for similar candidate tracks for autoplay fallback."""
-        from Infinix.helpers._dataclass import Track
         try:
             results = VideosSearch(query, limit=limit)
             raw_results = (await results.next()).get("result", [])
@@ -1142,3 +852,170 @@ class YouTube:
         except Exception as e:
             logger.warning("search_similar_candidates error for '%s': %s", query, e)
             return []
+
+    async def get_stream_url(
+        self,
+        video_id: str,
+        video: bool = False,
+        force_cookies: bool = False,
+    ) -> str | None:
+        """
+        Get a direct stream URL for instant playback (no download).
+        Disabled: always returns None to force local download.
+        """
+        return None
+
+    async def _store_in_dump(self, file_path: str, video_id: str, is_video: bool = False) -> None:
+        """Upload downloaded track to STORAGE_GROUP_ID and save file_id + shared msg_id in MongoDB."""
+        try:
+            from Infinix import app, db
+            storage_id = getattr(config, "STORAGE_GROUP_ID", 0) or getattr(config, "LOGGER_ID", 0)
+            if not storage_id:
+                return
+
+            if is_video:
+                msg = await app.send_video(storage_id, video=file_path, caption=f"#VIDEO #{video_id}")
+                file_id = msg.video.file_id if msg and msg.video else None
+            else:
+                msg = await app.send_audio(storage_id, audio=file_path, caption=f"#AUDIO #{video_id}")
+                file_id = msg.audio.file_id if msg and msg.audio else None
+
+            if msg and msg.id:
+                if file_id:
+                    await db.save_song_file_id(video_id, file_id, is_video)
+                await db.save_shared_song(video_id, msg.id, is_video)
+                logger.info("Stored %s in dump channel (%s) -> msg_id: %s", video_id, storage_id, msg.id)
+        except Exception as e:
+            logger.warning("Failed to store %s in dump channel: %s", video_id, e)
+
+
+    # ── Download (main method called by play.py / calls.py) ──────────────────
+    async def download(
+        self,
+        video_id: str,
+        video: bool = False,
+        title: str | None = None,
+    ) -> str | None:
+        """
+        Download audio/video by video_id using Telegram file_id cache, shared MongoDB Atlas msg_id cache, or Railway YT API.
+        Returns file path or None.
+        """
+        from Infinix import app, db
+        self.dl_stats["total_requests"] += 1
+        ext = "mp4" if video else "mp3"
+        target_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}")
+
+        lock = _dl_lock(video_id)
+        async with lock:
+            try:
+                # Check local disk cache first (<0.1ms instant HIT for played songs!)
+                if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+                    try:
+                        os.utime(target_path, None)
+                    except Exception:
+                        pass
+                    return target_path
+
+                # Check bot-local Telegram file_id cache in MongoDB
+                try:
+                    cached_file_id = await db.get_song_file_id(video_id, video)
+                    if cached_file_id:
+                        logger.info("Telegram Dump Cache HIT for %s (file_id: %s...)", video_id, cached_file_id[:15])
+                        downloaded_path = await app.download_media(cached_file_id, file_name=target_path)
+                        if downloaded_path and os.path.exists(downloaded_path) and os.path.getsize(downloaded_path) > 0:
+                            self.dl_stats["telegram_cache"] = self.dl_stats.get("telegram_cache", 0) + 1
+                            _evict_disk_cache()
+                            return str(downloaded_path)
+                except Exception as cache_err:
+                    logger.warning("Telegram file_id cache fetch failed for %s: %s", video_id, cache_err)
+
+                # Check SHARED MongoDB msg_id cache across ALL 8 BOTS!
+                try:
+                    shared_doc = await db.get_shared_song(video_id, video)
+                    if shared_doc and shared_doc.get("msg_id"):
+                        msg_id = shared_doc["msg_id"]
+                        storage_id = shared_doc.get("channel_id") or getattr(config, "STORAGE_GROUP_ID", -1003913556820)
+                        logger.info("Shared MongoDB Cache HIT for %s (channel: %s, msg_id: %s)", video_id, storage_id, msg_id)
+                        msg = await app.get_messages(storage_id, msg_id)
+                        if msg and (msg.audio or msg.video or msg.document):
+                            downloaded_path = await app.download_media(msg, file_name=target_path)
+                            if downloaded_path and os.path.exists(downloaded_path) and os.path.getsize(downloaded_path) > 0:
+                                file_id = (msg.audio or msg.video or msg.document).file_id
+                                await db.save_song_file_id(video_id, file_id, video)
+                                self.dl_stats["shared_cache"] = self.dl_stats.get("shared_cache", 0) + 1
+                                _evict_disk_cache()
+                                return str(downloaded_path)
+                except Exception as shared_err:
+                    logger.warning("Shared MongoDB cache fetch failed for %s: %s", video_id, shared_err)
+
+                # Fallback to YouTube extraction & download
+                link = _normalize_youtube_link(video_id, self.base)
+                try:
+                    result, downloader = await _download_with_fallback(
+                        link, "video" if video else "audio"
+                    )
+                    if result:
+                        self.dl_stats[downloader] = self.dl_stats.get(downloader, 0) + 1
+                        logger.info(
+                            "YouTube.download success: %s (%s) via %s",
+                            video_id,
+                            "video" if video else "audio",
+                            downloader,
+                        )
+                        asyncio.create_task(self._store_in_dump(result, video_id, video))
+                    else:
+                        self.dl_stats["failed"] += 1
+                    return result
+                except Exception as e:
+                    self.dl_stats["failed"] += 1
+                    logger.warning("YouTube.download error for '%s': %s", video_id, e)
+                    return None
+            finally:
+                _release_dl_lock(video_id)
+
+    # ── Playlist ──────────────────────────────────────────────────────────────
+    async def playlist(
+        self,
+        limit: int,
+        mention: str,
+        link: str,
+        video: bool = False,
+    ) -> list:
+        """Fetch playlist tracks, return list of Track dataclasses."""
+        from Infinix.helpers._dataclass import Track
+
+        link = _normalize_youtube_link(link)
+        try:
+            plist = await Playlist.get(link)
+        except Exception:
+            return []
+
+        tracks = []
+        for data in (plist.get("videos") or [])[:limit]:
+            if not data:
+                continue
+            vidid = data.get("id")
+            if not vidid:
+                continue
+            duration_min = data.get("duration") or "00:00"
+            duration_sec = int(utils.to_seconds(duration_min)) if duration_min else 0
+            thumbs       = data.get("thumbnails") or []
+            thumbnail    = thumbs[0].get("url", "").split("?")[0] if thumbs else ""
+            view_count = None
+            if "viewCount" in data and isinstance(data["viewCount"], dict):
+                view_count = data["viewCount"].get("short") or data["viewCount"].get("text")
+            channel_name = (data.get("channel") or {}).get("name", "")
+            tracks.append(Track(
+                id           = vidid,
+                title        = data.get("title") or vidid,
+                url          = data.get("link") or self.base + vidid,
+                duration     = duration_min,
+                duration_sec = duration_sec,
+                thumbnail    = thumbnail,
+                user         = mention,
+                video        = video,
+                time         = int(_time.time()),
+                view_count   = view_count,
+                channel_name = channel_name,
+            ))
+        return tracks
