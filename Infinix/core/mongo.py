@@ -1,7 +1,7 @@
-# Copyright (c) 2025 TheHamkerAlone
+# Copyright (c) 2025 AnonymousX1025
 # Licensed under the MIT License.
-# This file is part of InfinixMusic
-#ALONE-CODER
+# This file is part of AnonXMusic
+
 
 import os
 from random import randint
@@ -34,6 +34,8 @@ class MongoDB:
         self.notified = []
         self.autoplay = []
         self.cache = self.db.cache
+        # Default: logger is ON whenever LOGGER_ID is configured. The value is
+        # overwritten by get_logger() at boot if a persisted setting exists.
         self.logger = bool(config.LOGGER_ID)
 
         self.assistant = {}
@@ -71,6 +73,7 @@ class MongoDB:
         await self.mongo.close()
         logger.info("Database connection closed.")
 
+    # CACHE
     async def get_call(self, chat_id: int) -> bool:
         return chat_id in self.active_calls
 
@@ -98,6 +101,7 @@ class MongoDB:
     async def set_loop(self, chat_id: int, count: int) -> None:
         self.loop[chat_id] = count
 
+    # AUTH METHODS
     async def _get_auth(self, chat_id: int) -> set[int]:
         if chat_id not in self.auth:
             doc = await self.authdb.find_one({"_id": chat_id}) or {}
@@ -123,6 +127,7 @@ class MongoDB:
                 {"_id": chat_id}, {"$pull": {"user_ids": user_id}}
             )
 
+    # ASSISTANT METHODS
     async def set_assistant(self, chat_id: int) -> int:
         num = randint(1, len(userbot.clients))
         await self.assistantdb.update_one(
@@ -157,7 +162,9 @@ class MongoDB:
 
         return {1: userbot.one, 2: userbot.two, 3: userbot.three}.get(num)
 
+    # TELEGRAM STORAGE CHANNEL FILE_ID CACHE
     async def get_song_file_id(self, video_id: str, is_video: bool = False) -> str | None:
+        """Get Telegram file_id for a cached song from MongoDB."""
         key = f"{video_id}_v" if is_video else f"{video_id}_a"
         doc = await self.song_cachedb.find_one({"_id": key})
         return doc.get("file_id") if doc else None
@@ -203,6 +210,7 @@ class MongoDB:
             logger.warning("get_shared_song failed for %s: %s", video_id, e)
         return None
 
+    # BLACKLIST METHODS
     async def add_blacklist(self, chat_id: int) -> None:
         if str(chat_id).startswith("-"):
             self.blacklisted.append(chat_id)
@@ -238,6 +246,7 @@ class MongoDB:
         doc = await self.cache.find_one({"_id": "bl_users"})
         return doc.get("user_ids", []) if doc else []
 
+    # CHAT METHODS
     async def is_chat(self, chat_id: int) -> bool:
         return chat_id in self.chats
 
@@ -256,6 +265,7 @@ class MongoDB:
             self.chats.extend([chat["_id"] async for chat in self.chatsdb.find()])
         return self.chats
 
+    # COMMAND DELETE
     async def get_cmd_delete(self, chat_id: int) -> bool:
         if chat_id not in self.cmd_delete:
             doc = await self.chatsdb.find_one({"_id": chat_id})
@@ -274,6 +284,7 @@ class MongoDB:
             upsert=True,
         )
 
+    # LANGUAGE METHODS
     async def set_lang(self, chat_id: int, lang_code: str):
         await self.langdb.update_one(
             {"_id": chat_id},
@@ -285,9 +296,10 @@ class MongoDB:
     async def get_lang(self, chat_id: int) -> str:
         if chat_id not in self.lang:
             doc = await self.langdb.find_one({"_id": chat_id})
-            self.lang[chat_id] = doc["lang"] if doc else getattr(config, "LANG_CODE", "en")
+            self.lang[chat_id] = doc["lang"] if doc else config.LANG_CODE
         return self.lang[chat_id]
 
+    # LOGGER METHODS
     async def is_logger(self) -> bool:
         return self.logger
 
@@ -305,6 +317,7 @@ class MongoDB:
             upsert=True,
         )
 
+    # PLAY MODE METHODS
     async def get_play_mode(self, chat_id: int) -> bool:
         if chat_id not in self.admin_play:
             doc = await self.chatsdb.find_one({"_id": chat_id})
@@ -323,6 +336,7 @@ class MongoDB:
             upsert=True,
         )
 
+    # AUTOPLAY METHODS
     async def get_autoplay(self, chat_id: int) -> bool:
         if chat_id not in self.autoplay:
             doc = await self.chatsdb.find_one({"_id": chat_id})
@@ -343,6 +357,28 @@ class MongoDB:
             upsert=True,
         )
 
+    async def get_autoplay_mode(self, chat_id: int) -> str:
+        if not hasattr(self, "autoplay_mode"):
+            self.autoplay_mode = {}
+        if chat_id not in self.autoplay_mode:
+            doc = await self.chatsdb.find_one({"_id": chat_id})
+            self.autoplay_mode[chat_id] = (doc or {}).get("autoplay_mode", "vibe")
+        return self.autoplay_mode.get(chat_id, "vibe")
+
+    async def set_autoplay_mode(self, chat_id: int, mode: str = "vibe") -> None:
+        if not hasattr(self, "autoplay_mode"):
+            self.autoplay_mode = {}
+        if mode not in ["vibe", "artist", "trending"]:
+            mode = "vibe"
+        self.autoplay_mode[chat_id] = mode
+        await self.chatsdb.update_one(
+            {"_id": chat_id},
+            {"$set": {"autoplay_mode": mode}},
+            upsert=True,
+        )
+
+
+    # SUDO METHODS
     async def add_sudo(self, user_id: int) -> None:
         await self.cache.update_one(
             {"_id": "sudoers"}, {"$addToSet": {"user_ids": user_id}}, upsert=True
@@ -357,6 +393,7 @@ class MongoDB:
         doc = await self.cache.find_one({"_id": "sudoers"})
         return doc.get("user_ids", []) if doc else []
 
+    # USER METHODS
     async def is_user(self, user_id: int) -> bool:
         return user_id in self.users
 
@@ -374,6 +411,7 @@ class MongoDB:
         if not self.users:
             self.users.extend([user["_id"] async for user in self.usersdb.find()])
         return self.users
+
 
     async def migrate_coll(self) -> None:
         logger.info("Migrating users and chats from old collections...")
@@ -420,6 +458,14 @@ class MongoDB:
         logger.info("Migration completed successfully.")
 
     async def crawl_dialogs(self) -> int:
+        """Backfill the chats collection with every group the bot is actually
+        in. Bots cannot call GetDialogs (BOT_METHOD_INVALID), so we crawl via
+        the userbot sessions (userbot.clients) — same mechanism auto_leave
+        uses in misc.py. Persists every supergroup/group not already known.
+
+        Returns the number of groups discovered. Safe to call repeatedly;
+        chats already known are skipped.
+        """
         from pyrogram import enums
         ChatType = enums.ChatType
 
@@ -531,22 +577,6 @@ class MongoDB:
             await self.storage_db.assistant_pm_config.delete_one({"_id": "default"})
         except Exception as e:
             logger.warning("reset_assistant_pm_config failed: %s", e)
-
-    async def cleanup_old_downloads(self, days_old: int = 7) -> None:
-        """Placeholder — filesystem cleanup handled in __main__.py."""
-        try:
-            from time import time
-            cutoff = time() - (int(days_old) * 86400)
-            try:
-                await self.db.song_cache.delete_many({"created_at": {"$lt": cutoff}})
-            except Exception:
-                pass
-            try:
-                await self.storage_db.shared_song_cache.delete_many({"created_at": {"$lt": cutoff}})
-            except Exception:
-                pass
-        except Exception as e:
-            logger.warning("cleanup_old_downloads failed: %s", e)
 
     async def load_cache(self) -> None:
         doc = await self.cache.find_one({"_id": "migrated"})
