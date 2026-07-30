@@ -7,7 +7,7 @@ import re
 
 from pyrogram import enums, errors, filters, types
 
-from Infinix import Infinix as anon, app, config, db, lang, queue, tg, userbot, yt
+from Infinix import anon, app, config, db, lang, queue, tg, userbot, yt
 from Infinix.helpers import admin_check, buttons, can_manage_vc
 from Infinix.plugins import all_modules
 
