@@ -28,6 +28,10 @@ class MongoDB:
         self.admin_list = {}
         self.active_calls = {}
         self.admin_play = []
+
+    async def cleanup_old_downloads(self, days_old: int = 7) -> None:
+        """Cleanup old database downloads."""
+        pass
         self.blacklisted = []
         self.cmd_delete = []
         self.loop = {}
