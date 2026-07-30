@@ -15,11 +15,10 @@ from pyrogram.types import InputMediaPhoto, Message
 from pytgcalls import PyTgCalls, exceptions, types
 from pytgcalls.pytgcalls_session import PyTgCallsSession
 
-from Infinix.helpers import Media, Track, buttons, thumb, utils
 from Infinix import (app, config, db, lang, logger,
-                   queue, thumb, userbot, yt)
+                   queue, userbot, yt)
 from Infinix.core.youtube import YouTube, set_dl_context
-from Infinix.helpers import Media, Track, buttons, utils
+from Infinix.helpers import Media, Track, buttons, thumb, utils
 
 
 def _cleanup_file(media) -> None:
