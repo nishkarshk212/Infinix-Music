@@ -28,10 +28,6 @@ class MongoDB:
         self.admin_list = {}
         self.active_calls = {}
         self.admin_play = []
-
-    async def cleanup_old_downloads(self, days_old: int = 7) -> None:
-        """Cleanup old database downloads."""
-        pass
         self.blacklisted = []
         self.cmd_delete = []
         self.loop = {}
@@ -58,6 +54,10 @@ class MongoDB:
         self.usersdb = self.db.users
         self.song_cachedb = self.db.song_cache
 
+    async def cleanup_old_downloads(self, days_old: int = 7) -> None:
+        """Cleanup old database downloads."""
+        pass
+
     async def connect(self) -> None:
         """Check if we can connect to the database.
 
@@ -70,6 +70,8 @@ class MongoDB:
             logger.info(f"Database connection successful. ({time() - start:.2f}s)")
             await self.load_cache()
         except Exception as e:
+            import traceback
+            logger.error("Database connection exception details:\n%s", traceback.format_exc())
             raise SystemExit(f"Database connection failed: {type(e).__name__}") from e
 
     async def close(self) -> None:
