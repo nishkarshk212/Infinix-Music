@@ -1,13 +1,13 @@
-# Copyright (c) 2025 TheHamkerAlone
+# Copyright (c) 2025 AnonymousX1025
 # Licensed under the MIT License.
-# This file is part of InfinixMusic
-#ALONE-CODER
+# This file is part of AnonXMusic
+
 
 import re
 
 from pyrogram import enums, types
 
-from Infinix import app
+from Infinix import app, config, logger
 
 
 class Utilities:
@@ -41,23 +41,23 @@ class Utilities:
     def get_url(self, message_1: types.Message) -> str | None:
         link = None
         messages = [message_1]
-        entities = [enums.MessageEntityType.URL, enums.MessageEntityType.TEXT_LINK]
 
         if message_1.reply_to_message:
             messages.append(message_1.reply_to_message)
 
         for message in messages:
-            if message.entities:
-                for entity in message.entities:
-                    if entity.type in entities:
-                        link = entity.url
-                        break
+            entities = message.entities or message.caption_entities or []
 
-            if message.caption_entities:
-                for entity in message.caption_entities:
-                    if entity.type in entities:
-                        link = entity.url
-                        break
+            for entity in entities:
+                if entity.type == enums.MessageEntityType.TEXT_LINK:
+                    link = entity.url
+                    break
+                elif entity.type == enums.MessageEntityType.URL:
+                    text = message.text or message.caption
+                    if not text:
+                        continue
+                    link = text[entity.offset: entity.offset + entity.length]
+                    break
 
         if link:
             return link.split("&si")[0].split("?si")[0]
@@ -79,7 +79,7 @@ class Utilities:
                     return await app.get_users(m.group(0))
                 if m := re.search(r"\b\d{6,15}\b", msg.text):
                     return await app.get_users(int(m.group(0)))
-            except:
+            except Exception:
                 pass
 
         return None
@@ -88,22 +88,97 @@ class Utilities:
     async def play_log(
         self,
         m: types.Message,
+        link: str,
         title: str,
         duration: str,
+        media=None,
     ) -> None:
+        """Forward a detailed play log to the log group (LOGGER_ID).
+
+        Controlled by config.PLAY_LOG so it can be toggled off without a code
+        change. We intentionally send this on *every* play request (not just
+        when the /logger switch is on) so the owner always has a searchable
+        audit trail of what the bot played and from where. The log group is
+        skipped for messages sent from inside the log group itself.
+        """
+        if not config.PLAY_LOG:
+            return
         if m.chat.id == app.logger:
             return
+
+        # Extra detail when a media object is supplied.
+        extra = ""
+        if media is not None:
+            source = "file" if getattr(media, "file_path", None) else (
+                "stream" if getattr(media, "stream_url", None) else "fetching"
+            )
+            extra = (
+                f"\n<b>Video:</b> {'yes' if getattr(media, 'video', False) else 'no'}"
+                f"\n<b>Source:</b> {source}"
+            )
+            vid = getattr(media, "id", None)
+            if vid:
+                extra += f"\n<b>Video ID:</b> <code>{vid}</code>"
+            if getattr(media, "view_count", None):
+                extra += f"\n<b>Views:</b> {media.view_count}"
+            if getattr(media, "channel_name", None):
+                extra += f"\n<b>Channel:</b> {media.channel_name}"
+
         _text = m.lang["play_log"].format(
             app.name,
             m.chat.id,
             m.chat.title,
             m.from_user.id,
             m.from_user.mention,
-            m.link,
+            link,
             title,
             duration,
-        )
-        await app.send_message(chat_id=app.logger, text=_text)
+        ) + extra
+        try:
+            await app.send_message(chat_id=app.logger, text=_text)
+        except Exception as ex:
+            logger.warning("play_log send failed: %s", ex)
+
+    async def error_log(
+           self,
+           chat_id: int | None = None,
+           context: str = "",
+           error: Exception | str | None = None,
+           chat_title: str | None = None,
+           title: str | None = None,
+           video: bool = False,
+           media=None,
+       ) -> None:
+           """Forward a playback / download error to the configured log group.
+
+           Controlled by config.ERROR_LOG. This gives the owner a real-time view
+           of failures (dead stream URLs, download failures, Telegram server
+           errors) instead of having to dig through log.txt.
+           """
+           if not getattr(config, "ERROR_LOG", True):
+               return
+           import traceback
+
+           chat_label = chat_title or str(chat_id or "?")
+           source_label = "video" if video else "audio"
+           header = (
+               "<blockquote><b>"
+               "<emoji id=5364040533498932357>💎</emoji> [ ʟ ɪ ʟ ʏ ϻ ᴧ ɪ n f ʀ ᴧ ϻ є ᴧ s s ɪ s ᴛ ᴧ n ᴛ c ʀ ᴧ s ʜ ] <emoji id=5364040533498932357>💎</emoji>\n"
+               f"<emoji id=5422485795627892255>🧪</emoji> ʀ є ᴧ s σ n : {str(error)[:800]}\n"
+               f"<emoji id=5334607938546953071>📮</emoji> ᴄ ʜ ᴧ ᴛ : {chat_label} | "
+               f"<emoji id=5334607938546953071>🎵</emoji> s σ ᴜ ɴ ɢ : {title or '—'}\n"
+               "<emoji id=6131660139729522939>🔥</emoji> s ʏ s ᴛ є ϻ n є є ᴅ s ϻ ᴧ ɪ n ᴛ є n ᴧ n c є ʙ σ s s . . .</b></blockquote>"
+           )
+           detail = header + "\n<pre>" + traceback.format_exc()[-1200:] + "</pre>"
+           try:
+               await app.send_message(
+                   chat_id=(app.logger or chat_id or 0),
+                   text=detail,
+                   parse_mode=enums.ParseMode.HTML,
+               )
+           except Exception as ex:
+               logger.warning("error_log send failed: %s", ex)
+
 
     async def send_log(self, m: types.Message, chat: bool = False) -> None:
         if chat:
@@ -114,7 +189,7 @@ class Utilities:
                     m.chat.id,
                     m.chat.title,
                     user.id if user else 0,
-                    user.mention if user else "Infinixmous",
+                    user.mention if user else "Anonymous",
                 ),
             )
 
