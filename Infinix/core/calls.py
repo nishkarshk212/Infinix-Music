@@ -16,9 +16,9 @@ from pytgcalls import PyTgCalls, exceptions, types
 from pytgcalls.pytgcalls_session import PyTgCallsSession
 
 from Infinix import (app, config, db, lang, logger,
-                   queue, userbot, yt)
+                   queue, thumb, userbot, yt)
 from Infinix.core.youtube import YouTube, set_dl_context
-from Infinix.helpers import Media, Track, buttons, thumb, utils
+from Infinix.helpers import Media, Track, buttons, utils
 
 
 def _cleanup_file(media) -> None:
@@ -296,6 +296,10 @@ class TgCall(PyTgCalls):
                     media.duration,
                     media.user,
                 )
+
+                from Infinix.helpers._inline import _panel_state
+                _panel_state[chat_id] = _panel_state.get(chat_id, {})
+                _panel_state[chat_id]["playing_caption"] = text
 
                 keyboard = buttons.controls(
                     chat_id,
